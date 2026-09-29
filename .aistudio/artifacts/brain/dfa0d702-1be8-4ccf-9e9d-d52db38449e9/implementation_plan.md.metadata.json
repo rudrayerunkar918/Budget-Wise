@@ -1,0 +1,6 @@
+{
+  "summary":  "Complete database architecture specification for financial trading backend spanning PostgreSQL (user accounts, watchlists, double-entry append-only monthly partitioned ledger), Redis (write-through cache with proactive background workers for rate-limit immunity), and TimescaleDB (hypertables, continuous aggregates, and compression for EOD candles and net-worth tracking).",
+  "updatedAt":  "2026-09-29T07:25:25.796832051Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

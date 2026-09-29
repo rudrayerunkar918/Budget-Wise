@@ -1,0 +1,6 @@
+{
+  "name": "BudgetWise",
+  "description": "BudgetWise - Personal expense & budget tracker with stock portfolio management, Gemini AI spending analysis, visual analytics, and loans.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
