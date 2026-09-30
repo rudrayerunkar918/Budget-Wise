@@ -1,6 +1,5 @@
 package com.example.ui.screens
 
-import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -35,6 +34,7 @@ import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DashboardCustomize
@@ -43,27 +43,29 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Handshake
-import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import android.content.Intent
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PictureAsPdf
-import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.PieChart
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.SettingsBrightness
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Upload
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Switch
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -143,13 +145,13 @@ fun MoreScreen(
   var showDeleteDataDialog by remember { mutableStateOf(false) }
   var showMandatesScreen by remember { mutableStateOf(false) }
   var showFinancialReportScreen by remember { mutableStateOf(false) }
-  var showDatabaseArchitectureScreen by remember { mutableStateOf(false) }
-  var showFinnhubDialog by remember { mutableStateOf(false) }
-  var showAlphaVantageDialog by remember { mutableStateOf(false) }
+  var showDatabaseHubScreen by remember { mutableStateOf(false) }
+  var showStockApiKeysDialog by remember { mutableStateOf(false) }
 
-  if (showDatabaseArchitectureScreen) {
-    DatabaseArchitectureScreen(
-      onBackClick = { showDatabaseArchitectureScreen = false }
+  if (showDatabaseHubScreen && viewModel != null) {
+    DatabaseHubScreen(
+      viewModel = viewModel,
+      onBackClick = { showDatabaseHubScreen = false }
     )
     return
   }
@@ -277,6 +279,22 @@ fun MoreScreen(
     item {
       Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         MoreSettingRow(
+          title = "Database & Backups Hub",
+          subtitle = "Room SQLite health, auto-snapshots, AES-256 encrypted backups & restore",
+          icon = Icons.Default.Storage,
+          onClick = { showDatabaseHubScreen = true },
+          testTag = "more_item_database_hub"
+        )
+
+        MoreSettingRow(
+          title = "Google Drive Cloud Storage",
+          subtitle = "Upload backups to Google Drive or browse Drive storage",
+          icon = Icons.Default.CloudUpload,
+          onClick = { DataBackupManager.openGoogleDrive(context) },
+          testTag = "more_item_google_drive"
+        )
+
+        MoreSettingRow(
           title = "Financial Report (PDF)",
           subtitle = "Download comprehensive audit with graphs & advice (1 wk – 2 yrs)",
           icon = Icons.Default.PictureAsPdf,
@@ -307,95 +325,6 @@ fun MoreScreen(
           onClick = { showDeleteDataDialog = true },
           testTag = "more_item_delete_data"
         )
-      }
-    }
-
-    // SECTION: FINANCIAL TRADING DATABASE ARCHITECTURE
-    item {
-      Text(
-        text = "BACKEND & DATABASE ARCHITECTURE",
-        style = MaterialTheme.typography.labelSmall,
-        fontWeight = FontWeight.Bold,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(start = 4.dp, top = 4.dp)
-      )
-    }
-
-    item {
-      Card(
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(
-          containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-        ),
-        modifier = Modifier
-          .fillMaxWidth()
-          .clickable { showDatabaseArchitectureScreen = true }
-          .testTag("card_more_database_architecture")
-      ) {
-        Column(
-          modifier = Modifier.padding(14.dp),
-          verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-          Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-          ) {
-            Box(
-              modifier = Modifier
-                .size(44.dp)
-                .background(Color(0xFF2563EB), CircleShape),
-              contentAlignment = Alignment.Center
-            ) {
-              Icon(
-                imageVector = Icons.Default.Layers,
-                contentDescription = "Database Architecture",
-                tint = Color.White
-              )
-            }
-
-            Column(modifier = Modifier.weight(1f)) {
-              Text(
-                text = "Trading Database Architecture",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
-              )
-              Text(
-                text = "PostgreSQL Ledger • Redis Cache • TimescaleDB EOD",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.SemiBold
-              )
-            }
-
-            Icon(
-              imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
-              contentDescription = "Open Architecture",
-              tint = MaterialTheme.colorScheme.onSurfaceVariant,
-              modifier = Modifier.size(16.dp)
-            )
-          }
-
-          Text(
-            text = "Explore the full multi-tier financial schema: immutable double-entry ledger partitioned monthly, Redis write-through cache with Lua rate-limiting, and TimescaleDB hypertables with 90% columnar compression.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-          )
-
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End
-          ) {
-            Button(
-              onClick = { showDatabaseArchitectureScreen = true },
-              shape = RoundedCornerShape(8.dp),
-              contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-              modifier = Modifier.testTag("btn_open_db_architecture")
-            ) {
-              Text("Explore & Simulate Stack", style = MaterialTheme.typography.labelMedium)
-            }
-          }
-        }
       }
     }
 
@@ -842,6 +771,166 @@ fun MoreScreen(
       }
     }
 
+    // SECTION: STOCK MARKET API KEYS & REAL-TIME INR DATA
+    item {
+      Text(
+        text = "REAL-TIME STOCK MARKET DATA (INR)",
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        color = Color(0xFF0D47A1),
+        modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+      )
+    }
+
+    item {
+      Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+          containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+        ),
+        modifier = Modifier.fillMaxWidth().testTag("card_stock_api_keys")
+      ) {
+        Column(
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(14.dp),
+          verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              Box(
+                modifier = Modifier
+                  .size(34.dp)
+                  .clip(CircleShape)
+                  .background(Color(0xFF0D47A1).copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center
+              ) {
+                Icon(
+                  imageVector = Icons.Default.Key,
+                  contentDescription = null,
+                  tint = Color(0xFF0D47A1),
+                  modifier = Modifier.size(20.dp)
+                )
+              }
+              Spacer(modifier = Modifier.width(10.dp))
+              Column {
+                Text(
+                  text = "Finnhub & Alpha Vantage APIs",
+                  style = MaterialTheme.typography.titleSmall,
+                  fontWeight = FontWeight.Bold
+                )
+                Text(
+                  text = "Live quotes & real-time USD/INR forex conversion",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  fontSize = 11.sp
+                )
+              }
+            }
+          }
+
+          val finnhubKey by (viewModel?.finnhubApiKey?.collectAsState() ?: remember { mutableStateOf("") })
+          val alphaKey by (viewModel?.alphaVantageApiKey?.collectAsState() ?: remember { mutableStateOf("") })
+          val liveForex by (viewModel?.liveUsdInrRate?.collectAsState() ?: remember { mutableStateOf(85.50) })
+
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+          ) {
+            Surface(
+              shape = RoundedCornerShape(8.dp),
+              color = MaterialTheme.colorScheme.surface,
+              modifier = Modifier.weight(1f)
+            ) {
+              Column(modifier = Modifier.padding(10.dp)) {
+                Text(
+                  text = "FINNHUB",
+                  style = MaterialTheme.typography.labelSmall,
+                  fontSize = 9.sp,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                  text = if (finnhubKey.isNotBlank()) "Linked" else "Not Set",
+                  style = MaterialTheme.typography.bodyMedium,
+                  fontWeight = FontWeight.Bold,
+                  color = if (finnhubKey.isNotBlank()) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+              }
+            }
+
+            Surface(
+              shape = RoundedCornerShape(8.dp),
+              color = MaterialTheme.colorScheme.surface,
+              modifier = Modifier.weight(1f)
+            ) {
+              Column(modifier = Modifier.padding(10.dp)) {
+                Text(
+                  text = "ALPHA VANTAGE",
+                  style = MaterialTheme.typography.labelSmall,
+                  fontSize = 9.sp,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                  text = if (alphaKey.isNotBlank()) "Linked" else "Not Set",
+                  style = MaterialTheme.typography.bodyMedium,
+                  fontWeight = FontWeight.Bold,
+                  color = if (alphaKey.isNotBlank()) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+              }
+            }
+
+            Surface(
+              shape = RoundedCornerShape(8.dp),
+              color = MaterialTheme.colorScheme.surface,
+              modifier = Modifier.weight(1f)
+            ) {
+              Column(modifier = Modifier.padding(10.dp)) {
+                Text(
+                  text = "LIVE USD/INR",
+                  style = MaterialTheme.typography.labelSmall,
+                  fontSize = 9.sp,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                  text = "₹${String.format("%.2f", liveForex)}",
+                  style = MaterialTheme.typography.bodyMedium,
+                  fontWeight = FontWeight.Bold,
+                  color = Color(0xFF0D47A1)
+                )
+              }
+            }
+          }
+
+          Text(
+            text = "All foreign/US stocks (e.g. AAPL, NVDA, TSLA) are automatically displayed in INR using real-time forex rates.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 11.sp
+          )
+
+          Button(
+            onClick = { showStockApiKeysDialog = true },
+            shape = RoundedCornerShape(10.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0D47A1)),
+            modifier = Modifier.fillMaxWidth().testTag("btn_configure_stock_api_keys")
+          ) {
+            Icon(
+              imageVector = Icons.Default.Key,
+              contentDescription = null,
+              modifier = Modifier.size(16.dp),
+              tint = Color.White
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Configure Finnhub & Alpha Vantage Keys", color = Color.White)
+          }
+        }
+      }
+    }
+
     // SECTION 3: PREFERENCES & CUSTOMIZATION
     item {
       Text(
@@ -904,26 +993,6 @@ fun MoreScreen(
           icon = Icons.Default.DashboardCustomize,
           onClick = onOpenEditHomeScreen,
           testTag = "more_item_edit_home"
-        )
-
-        val finnhubKey by viewModel?.finnhubApiKey?.collectAsState() ?: remember { mutableStateOf("") }
-        val isFinnhubConfigured = viewModel?.finnhubApiService?.isConfigured(finnhubKey) ?: false
-        MoreSettingRow(
-          title = "Finnhub Stock Market API",
-          subtitle = if (isFinnhubConfigured) "Connected • Real-time quotes & company info active" else "Configure API key for live US & global stock data",
-          icon = Icons.Default.Key,
-          onClick = { showFinnhubDialog = true },
-          testTag = "more_item_finnhub_api"
-        )
-
-        val alphaVantageKey by viewModel?.alphaVantageApiKey?.collectAsState() ?: remember { mutableStateOf("") }
-        val isAlphaVantageConfigured = viewModel?.alphaVantageApiService?.isConfigured(alphaVantageKey) ?: false
-        MoreSettingRow(
-          title = "Alpha Vantage Stock API",
-          subtitle = if (isAlphaVantageConfigured) "Connected • Real-time BSE, NSE & global quotes active" else "Configure API key for live BSE/NSE & US market data",
-          icon = Icons.Default.Key,
-          onClick = { showAlphaVantageDialog = true },
-          testTag = "more_item_alphavantage_api"
         )
       }
     }
@@ -1139,19 +1208,11 @@ fun MoreScreen(
     )
   }
 
-  // DIALOG: FINNHUB API SETTINGS
-  if (showFinnhubDialog && viewModel != null) {
-    FinnhubApiSettingsDialog(
+  // DIALOG: STOCK MARKET API KEYS
+  if (showStockApiKeysDialog && viewModel != null) {
+    StockMarketApiKeysDialog(
       viewModel = viewModel,
-      onDismiss = { showFinnhubDialog = false }
-    )
-  }
-
-  // DIALOG: ALPHA VANTAGE API SETTINGS
-  if (showAlphaVantageDialog && viewModel != null) {
-    AlphaVantageApiSettingsDialog(
-      viewModel = viewModel,
-      onDismiss = { showAlphaVantageDialog = false }
+      onDismiss = { showStockApiKeysDialog = false }
     )
   }
 }
@@ -1416,7 +1477,8 @@ private fun ImportDataDialog(
                       "• ${summary.accountsCount} Accounts & Wallets\n" +
                       "• ${summary.stocksCount} Stocks & Holdings\n" +
                       "• ${summary.budgetsCount} Budgets • ${summary.goalsCount} Goals\n" +
-                      "• ${summary.subscriptionsCount} Subscriptions • ${summary.loansCount} Loans",
+                      "• ${summary.subscriptionsCount} Subscriptions • ${summary.loansCount} Loans" +
+                      (if (summary.sipsCount > 0 || summary.mandatesCount > 0) "\n• ${summary.sipsCount} Mutual Fund SIPs • ${summary.mandatesCount} Auto-Mandates" else ""),
                   style = MaterialTheme.typography.bodySmall,
                   fontSize = 11.sp
                 )
@@ -1830,224 +1892,283 @@ private fun DeleteDataDialog(
   )
 }
 
-/**
- * Dialog to configure and test Finnhub API key and auto-sync preferences.
- */
 @Composable
-fun FinnhubApiSettingsDialog(
+private fun StockMarketApiKeysDialog(
   viewModel: ExpenseViewModel,
   onDismiss: () -> Unit
 ) {
   val context = LocalContext.current
-  val currentKey by viewModel.finnhubApiKey.collectAsState()
-  val autoSync by viewModel.finnhubAutoSync.collectAsState()
-  val isTesting by viewModel.isTestingFinnhub.collectAsState()
-  val validationStatus by viewModel.finnhubValidationStatus.collectAsState()
+  val currentFinnhub by viewModel.finnhubApiKey.collectAsState()
+  val currentAlpha by viewModel.alphaVantageApiKey.collectAsState()
+  val liveForex by viewModel.liveUsdInrRate.collectAsState()
 
-  var inputKey by remember { mutableStateOf(currentKey) }
-  var showKeyText by remember { mutableStateOf(false) }
+  var finnhubInput by remember(currentFinnhub) { mutableStateOf(currentFinnhub) }
+  var alphaInput by remember(currentAlpha) { mutableStateOf(currentAlpha) }
 
-  val activeSource = if (inputKey.isNotBlank()) {
-    "In-App Key configured"
-  } else if (viewModel.finnhubApiService.resolveApiKey().isNotBlank()) {
-    "AI Studio Secrets Key active (${viewModel.finnhubApiService.resolveApiKey().take(4)}••••)"
-  } else {
-    "No key detected"
-  }
+  var finnhubVisible by remember { mutableStateOf(false) }
+  var alphaVisible by remember { mutableStateOf(false) }
+
+  var finnhubTesting by remember { mutableStateOf(false) }
+  var finnhubStatus by remember { mutableStateOf<String?>(null) }
+  var finnhubStatusSuccess by remember { mutableStateOf(false) }
+
+  var alphaTesting by remember { mutableStateOf(false) }
+  var alphaStatus by remember { mutableStateOf<String?>(null) }
+  var alphaStatusSuccess by remember { mutableStateOf(false) }
 
   AlertDialog(
     onDismissRequest = onDismiss,
     title = {
-      Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-      ) {
-        Box(
-          modifier = Modifier
-            .size(36.dp)
-            .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
-          contentAlignment = Alignment.Center
-        ) {
-          Icon(
-            imageVector = Icons.Default.Key,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(20.dp)
-          )
-        }
-        Column {
-          Text(
-            text = "Finnhub Stock API",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-          )
-          Text(
-            text = "Real-time quotes & company info",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-          )
-        }
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+          imageVector = Icons.Default.Key,
+          contentDescription = null,
+          tint = Color(0xFF0D47A1),
+          modifier = Modifier.size(24.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text("Stock Market API Keys", fontWeight = FontWeight.Bold)
       }
     },
     text = {
       Column(
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
       ) {
         Text(
-          text = "Enter your Finnhub API key to fetch real-time market data, day high/low ranges, and company profiles for US and global stocks.",
+          text = "Enter your Finnhub and Alpha Vantage API keys to stream live stock prices. All US/global equities are automatically converted to INR using real-time forex rates.",
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
-        // Current status banner
+        // Live INR Conversion Banner
         Surface(
           shape = RoundedCornerShape(10.dp),
-          color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-          border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+          color = Color(0xFF1B664B).copy(alpha = 0.12f),
+          border = BorderStroke(1.dp, Color(0xFF1B664B).copy(alpha = 0.3f)),
+          modifier = Modifier.fillMaxWidth()
         ) {
           Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .padding(10.dp),
+            modifier = Modifier.padding(10.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.SpaceBetween
           ) {
-            Icon(
-              imageVector = if (viewModel.finnhubApiService.isConfigured(inputKey)) Icons.Default.CheckCircle else Icons.Default.Warning,
-              contentDescription = null,
-              tint = if (viewModel.finnhubApiService.isConfigured(inputKey)) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-              modifier = Modifier.size(18.dp)
-            )
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
               Text(
-                text = "Active Status: $activeSource",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold
-              )
-              Text(
-                text = "Key priority: In-App Key > Secrets Panel (.env)",
+                text = "Universal INR Conversion: Active",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 10.sp
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF1B664B)
+              )
+              Text(
+                text = "Live Rate: 1 USD = ₹${String.format("%.2f", liveForex)}",
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF1B664B)
               )
             }
-          }
-        }
-
-        // API Key input field
-        OutlinedTextField(
-          value = inputKey,
-          onValueChange = { inputKey = it },
-          label = { Text("Finnhub API Key") },
-          placeholder = { Text("Paste your API key here") },
-          singleLine = true,
-          visualTransformation = if (showKeyText) VisualTransformation.None else PasswordVisualTransformation(),
-          trailingIcon = {
-            IconButton(onClick = { showKeyText = !showKeyText }) {
+            IconButton(
+              onClick = { viewModel.refreshLiveUsdInrRate() },
+              modifier = Modifier.size(32.dp)
+            ) {
               Icon(
-                imageVector = if (showKeyText) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                contentDescription = if (showKeyText) "Hide key" else "Show key"
+                imageVector = Icons.Default.Refresh,
+                contentDescription = "Refresh live rate",
+                tint = Color(0xFF1B664B),
+                modifier = Modifier.size(18.dp)
               )
             }
-          },
-          modifier = Modifier
-            .fillMaxWidth()
-            .testTag("input_finnhub_api_key")
-        )
-
-        // Auto Sync switch
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
-          verticalAlignment = Alignment.CenterVertically
-        ) {
-          Column(modifier = Modifier.weight(1f)) {
-            Text(
-              text = "Auto-update portfolio stocks",
-              style = MaterialTheme.typography.bodyMedium,
-              fontWeight = FontWeight.Medium
-            )
-            Text(
-              text = "Sync matching US/global holdings with Finnhub",
-              style = MaterialTheme.typography.labelSmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
           }
-          Switch(
-            checked = autoSync,
-            onCheckedChange = { viewModel.setFinnhubAutoSync(it) },
-            modifier = Modifier.testTag("switch_finnhub_autosync")
-          )
         }
 
-        // Test connection button
-        OutlinedButton(
-          onClick = {
-            val keyToTest = inputKey.ifBlank { viewModel.finnhubApiService.resolveApiKey() }
-            if (keyToTest.isBlank()) {
-              Toast.makeText(context, "Please enter an API key first", Toast.LENGTH_SHORT).show()
-            } else {
-              viewModel.validateFinnhubApiKey(keyToTest)
+        // Finnhub API Key Section
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Text(
+              text = "Finnhub API Key",
+              style = MaterialTheme.typography.labelMedium,
+              fontWeight = FontWeight.Bold
+            )
+            Text(
+              text = "Get Free Key ↗",
+              color = Color(0xFF0D47A1),
+              fontSize = 11.sp,
+              fontWeight = FontWeight.Bold,
+              modifier = Modifier.clickable {
+                try {
+                  val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://finnhub.io/register"))
+                  intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                  context.startActivity(intent)
+                } catch (_: Exception) {}
+              }
+            )
+          }
+
+          OutlinedTextField(
+            value = finnhubInput,
+            onValueChange = { finnhubInput = it; finnhubStatus = null },
+            modifier = Modifier.fillMaxWidth().testTag("input_finnhub_key"),
+            placeholder = { Text("Enter Finnhub API key", fontSize = 12.sp) },
+            singleLine = true,
+            visualTransformation = if (finnhubVisible) VisualTransformation.None else PasswordVisualTransformation(),
+            trailingIcon = {
+              IconButton(onClick = { finnhubVisible = !finnhubVisible }) {
+                Icon(
+                  imageVector = if (finnhubVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                  contentDescription = "Toggle key visibility",
+                  modifier = Modifier.size(18.dp)
+                )
+              }
             }
-          },
-          enabled = !isTesting,
-          modifier = Modifier
-            .fillMaxWidth()
-            .testTag("btn_test_finnhub_key"),
-          shape = RoundedCornerShape(8.dp)
-        ) {
-          if (isTesting) {
-            CircularProgressIndicator(
-              modifier = Modifier.size(16.dp),
-              strokeWidth = 2.dp
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Validating...")
-          } else {
-            Text("Test Connection")
+          )
+
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            if (finnhubStatus != null) {
+              Text(
+                text = finnhubStatus ?: "",
+                style = MaterialTheme.typography.bodySmall,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = if (finnhubStatusSuccess) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error,
+                modifier = Modifier.weight(1f)
+              )
+            } else {
+              Spacer(modifier = Modifier.weight(1f))
+            }
+
+            OutlinedButton(
+              onClick = {
+                finnhubTesting = true
+                finnhubStatus = null
+                viewModel.testFinnhubApiKey(finnhubInput) { success, msg ->
+                  finnhubTesting = false
+                  finnhubStatusSuccess = success
+                  finnhubStatus = msg
+                }
+              },
+              enabled = !finnhubTesting && finnhubInput.isNotBlank(),
+              shape = RoundedCornerShape(8.dp),
+              modifier = Modifier.testTag("btn_test_finnhub_key")
+            ) {
+              if (finnhubTesting) {
+                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                Spacer(modifier = Modifier.width(6.dp))
+              }
+              Text("Test Key", fontSize = 11.sp)
+            }
           }
         }
 
-        // Validation status text
-        if (validationStatus != null) {
-          val isSuccess = validationStatus!!.startsWith("Verified")
-          Text(
-            text = validationStatus!!,
-            style = MaterialTheme.typography.bodySmall,
-            color = if (isSuccess) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-            fontWeight = FontWeight.Medium
-          )
-        }
+        // Alpha Vantage API Key Section
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Text(
+              text = "Alpha Vantage API Key",
+              style = MaterialTheme.typography.labelMedium,
+              fontWeight = FontWeight.Bold
+            )
+            Text(
+              text = "Get Free Key ↗",
+              color = Color(0xFF0D47A1),
+              fontSize = 11.sp,
+              fontWeight = FontWeight.Bold,
+              modifier = Modifier.clickable {
+                try {
+                  val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.alphavantage.co/support/#api-key"))
+                  intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                  context.startActivity(intent)
+                } catch (_: Exception) {}
+              }
+            )
+          }
 
-        // Link to Finnhub website
-        TextButton(
-          onClick = {
-            try {
-              val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://finnhub.io/register"))
-              context.startActivity(intent)
-            } catch (_: Exception) {}
-          },
-          modifier = Modifier.align(Alignment.CenterHorizontally)
-        ) {
-          Text(
-            text = "Need a free key? Get it on finnhub.io ↗",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary
+          OutlinedTextField(
+            value = alphaInput,
+            onValueChange = { alphaInput = it; alphaStatus = null },
+            modifier = Modifier.fillMaxWidth().testTag("input_alpha_vantage_key"),
+            placeholder = { Text("Enter Alpha Vantage key", fontSize = 12.sp) },
+            singleLine = true,
+            visualTransformation = if (alphaVisible) VisualTransformation.None else PasswordVisualTransformation(),
+            trailingIcon = {
+              IconButton(onClick = { alphaVisible = !alphaVisible }) {
+                Icon(
+                  imageVector = if (alphaVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                  contentDescription = "Toggle key visibility",
+                  modifier = Modifier.size(18.dp)
+                )
+              }
+            }
           )
+
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            if (alphaStatus != null) {
+              Text(
+                text = alphaStatus ?: "",
+                style = MaterialTheme.typography.bodySmall,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = if (alphaStatusSuccess) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error,
+                modifier = Modifier.weight(1f)
+              )
+            } else {
+              Spacer(modifier = Modifier.weight(1f))
+            }
+
+            OutlinedButton(
+              onClick = {
+                alphaTesting = true
+                alphaStatus = null
+                viewModel.testAlphaVantageApiKey(alphaInput) { success, msg ->
+                  alphaTesting = false
+                  alphaStatusSuccess = success
+                  alphaStatus = msg
+                }
+              },
+              enabled = !alphaTesting && alphaInput.isNotBlank(),
+              shape = RoundedCornerShape(8.dp),
+              modifier = Modifier.testTag("btn_test_alpha_key")
+            ) {
+              if (alphaTesting) {
+                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                Spacer(modifier = Modifier.width(6.dp))
+              }
+              Text("Test Key", fontSize = 11.sp)
+            }
+          }
         }
       }
     },
     confirmButton = {
       Button(
         onClick = {
-          viewModel.setFinnhubApiKey(inputKey)
-          Toast.makeText(context, "Finnhub configuration saved!", Toast.LENGTH_SHORT).show()
+          viewModel.setFinnhubApiKey(finnhubInput)
+          viewModel.setAlphaVantageApiKey(alphaInput)
+          viewModel.refreshAllStockPrices(force = true)
+          Toast.makeText(context, "API keys saved! Live stock prices updating in INR.", Toast.LENGTH_SHORT).show()
           onDismiss()
         },
-        modifier = Modifier.testTag("btn_save_finnhub_key")
+        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0D47A1)),
+        modifier = Modifier.testTag("btn_save_stock_api_keys")
       ) {
-        Text("Save & Apply")
+        Text("Save & Sync in INR")
       }
     },
     dismissButton = {
@@ -2058,234 +2179,3 @@ fun FinnhubApiSettingsDialog(
   )
 }
 
-/**
- * Dialog to configure and test Alpha Vantage API key and auto-sync preferences.
- */
-@Composable
-fun AlphaVantageApiSettingsDialog(
-  viewModel: ExpenseViewModel,
-  onDismiss: () -> Unit
-) {
-  val context = LocalContext.current
-  val currentKey by viewModel.alphaVantageApiKey.collectAsState()
-  val autoSync by viewModel.alphaVantageAutoSync.collectAsState()
-  val isTesting by viewModel.isTestingAlphaVantage.collectAsState()
-  val validationStatus by viewModel.alphaVantageValidationStatus.collectAsState()
-
-  var inputKey by remember { mutableStateOf(currentKey) }
-  var showKeyText by remember { mutableStateOf(false) }
-
-  val activeSource = if (inputKey.isNotBlank()) {
-    "In-App Key configured"
-  } else if (viewModel.alphaVantageApiService.resolveApiKey().isNotBlank()) {
-    "AI Studio Secrets Key active (${viewModel.alphaVantageApiService.resolveApiKey().take(4)}••••)"
-  } else {
-    "No key detected"
-  }
-
-  AlertDialog(
-    onDismissRequest = onDismiss,
-    title = {
-      Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-      ) {
-        Box(
-          modifier = Modifier
-            .size(36.dp)
-            .background(Color(0xFFE67E22).copy(alpha = 0.2f), CircleShape),
-          contentAlignment = Alignment.Center
-        ) {
-          Icon(
-            imageVector = Icons.Default.Key,
-            contentDescription = null,
-            tint = Color(0xFFD35400),
-            modifier = Modifier.size(20.dp)
-          )
-        }
-        Column {
-          Text(
-            text = "Alpha Vantage Stock API",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-          )
-          Text(
-            text = "BSE, NSE & Global Live Quotes",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-          )
-        }
-      }
-    },
-    text = {
-      Column(
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-        modifier = Modifier.fillMaxWidth()
-      ) {
-        Text(
-          text = "Enter your Alpha Vantage API key to fetch real-time stock prices, fundamentals, PE ratios, and day ranges for Indian (BSE/NSE) and global equities.",
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        // Current status banner
-        Surface(
-          shape = RoundedCornerShape(10.dp),
-          color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-          border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-        ) {
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-          ) {
-            Icon(
-              imageVector = if (viewModel.alphaVantageApiService.isConfigured(inputKey)) Icons.Default.CheckCircle else Icons.Default.Warning,
-              contentDescription = null,
-              tint = if (viewModel.alphaVantageApiService.isConfigured(inputKey)) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-              modifier = Modifier.size(18.dp)
-            )
-            Column {
-              Text(
-                text = "Active Status: $activeSource",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold
-              )
-              Text(
-                text = "Key priority: In-App Key > Secrets Panel (.env)",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 10.sp
-              )
-            }
-          }
-        }
-
-        // API Key input field
-        OutlinedTextField(
-          value = inputKey,
-          onValueChange = { inputKey = it },
-          label = { Text("Alpha Vantage API Key") },
-          placeholder = { Text("Paste your API key here") },
-          singleLine = true,
-          visualTransformation = if (showKeyText) VisualTransformation.None else PasswordVisualTransformation(),
-          trailingIcon = {
-            IconButton(onClick = { showKeyText = !showKeyText }) {
-              Icon(
-                imageVector = if (showKeyText) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                contentDescription = if (showKeyText) "Hide key" else "Show key"
-              )
-            }
-          },
-          modifier = Modifier
-            .fillMaxWidth()
-            .testTag("input_alphavantage_api_key")
-        )
-
-        // Auto Sync switch
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
-          verticalAlignment = Alignment.CenterVertically
-        ) {
-          Column(modifier = Modifier.weight(1f)) {
-            Text(
-              text = "Auto-update portfolio stocks",
-              style = MaterialTheme.typography.bodyMedium,
-              fontWeight = FontWeight.Medium
-            )
-            Text(
-              text = "Sync matching BSE/NSE/Global holdings",
-              style = MaterialTheme.typography.labelSmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-          }
-          Switch(
-            checked = autoSync,
-            onCheckedChange = { viewModel.setAlphaVantageAutoSync(it) },
-            modifier = Modifier.testTag("switch_alphavantage_autosync")
-          )
-        }
-
-        // Test connection button
-        OutlinedButton(
-          onClick = {
-            val keyToTest = inputKey.ifBlank { viewModel.alphaVantageApiService.resolveApiKey() }
-            if (keyToTest.isBlank()) {
-              Toast.makeText(context, "Please enter an API key first", Toast.LENGTH_SHORT).show()
-            } else {
-              viewModel.validateAlphaVantageApiKey(keyToTest)
-            }
-          },
-          enabled = !isTesting,
-          modifier = Modifier
-            .fillMaxWidth()
-            .testTag("btn_test_alphavantage_key"),
-          shape = RoundedCornerShape(8.dp)
-        ) {
-          if (isTesting) {
-            CircularProgressIndicator(
-              modifier = Modifier.size(16.dp),
-              strokeWidth = 2.dp
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Validating...")
-          } else {
-            Text("Test Connection")
-          }
-        }
-
-        // Validation status text
-        if (validationStatus != null) {
-          val isSuccess = validationStatus!!.startsWith("Verified")
-          Text(
-            text = validationStatus!!,
-            style = MaterialTheme.typography.bodySmall,
-            color = if (isSuccess) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-            fontWeight = FontWeight.Medium
-          )
-        }
-
-        // Link to Alpha Vantage website
-        TextButton(
-          onClick = {
-            try {
-              val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.alphavantage.co/support/#api-key"))
-              context.startActivity(intent)
-            } catch (_: Exception) {}
-          },
-          modifier = Modifier.align(Alignment.CenterHorizontally)
-        ) {
-          Text(
-            text = "Need a free key? Get it on alphavantage.co ↗",
-            style = MaterialTheme.typography.labelMedium,
-            color = Color(0xFFD35400)
-          )
-        }
-      }
-    },
-    confirmButton = {
-      Button(
-        onClick = {
-          viewModel.setAlphaVantageApiKey(inputKey)
-          Toast.makeText(context, "Alpha Vantage configuration saved!", Toast.LENGTH_SHORT).show()
-          onDismiss()
-        },
-        colors = ButtonDefaults.buttonColors(
-          containerColor = Color(0xFFE67E22),
-          contentColor = Color.White
-        ),
-        modifier = Modifier.testTag("btn_save_alphavantage_key")
-      ) {
-        Text("Save & Apply")
-      }
-    },
-    dismissButton = {
-      TextButton(onClick = onDismiss) {
-        Text("Cancel")
-      }
-    }
-  )
-}

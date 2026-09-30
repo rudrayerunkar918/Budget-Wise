@@ -84,42 +84,6 @@ class UserPreferencesManager(context: Context) {
   private val _greeting = MutableStateFlow(prefs.getString(KEY_GREETING, "Hope all is well") ?: "Hope all is well")
   val greeting: StateFlow<String> = _greeting.asStateFlow()
 
-  // 6. Finnhub API Key & Auto Sync
-  private val _finnhubApiKey = MutableStateFlow(prefs.getString(KEY_FINNHUB_API_KEY, "") ?: "")
-  val finnhubApiKey: StateFlow<String> = _finnhubApiKey.asStateFlow()
-
-  private val _finnhubAutoSync = MutableStateFlow(prefs.getBoolean(KEY_FINNHUB_AUTO_SYNC, true))
-  val finnhubAutoSync: StateFlow<Boolean> = _finnhubAutoSync.asStateFlow()
-
-  fun setFinnhubApiKey(key: String) {
-    val cleanKey = key.trim()
-    _finnhubApiKey.value = cleanKey
-    prefs.edit().putString(KEY_FINNHUB_API_KEY, cleanKey).apply()
-  }
-
-  fun setFinnhubAutoSync(enabled: Boolean) {
-    _finnhubAutoSync.value = enabled
-    prefs.edit().putBoolean(KEY_FINNHUB_AUTO_SYNC, enabled).apply()
-  }
-
-  // 7. Alpha Vantage API Key & Auto Sync
-  private val _alphaVantageApiKey = MutableStateFlow(prefs.getString(KEY_ALPHA_VANTAGE_API_KEY, "") ?: "")
-  val alphaVantageApiKey: StateFlow<String> = _alphaVantageApiKey.asStateFlow()
-
-  private val _alphaVantageAutoSync = MutableStateFlow(prefs.getBoolean(KEY_ALPHA_VANTAGE_AUTO_SYNC, true))
-  val alphaVantageAutoSync: StateFlow<Boolean> = _alphaVantageAutoSync.asStateFlow()
-
-  fun setAlphaVantageApiKey(key: String) {
-    val cleanKey = key.trim()
-    _alphaVantageApiKey.value = cleanKey
-    prefs.edit().putString(KEY_ALPHA_VANTAGE_API_KEY, cleanKey).apply()
-  }
-
-  fun setAlphaVantageAutoSync(enabled: Boolean) {
-    _alphaVantageAutoSync.value = enabled
-    prefs.edit().putBoolean(KEY_ALPHA_VANTAGE_AUTO_SYNC, enabled).apply()
-  }
-
   // --- Theme Mode Functions ---
   fun setThemeMode(mode: ThemeMode) {
     _themeMode.value = mode
@@ -298,6 +262,65 @@ class UserPreferencesManager(context: Context) {
       .apply()
   }
 
+  // --- Auto-Backup & Encryption Preferences ---
+  private val _autoBackupEnabled = MutableStateFlow(prefs.getBoolean(KEY_AUTO_BACKUP_ENABLED, true))
+  val autoBackupEnabled: StateFlow<Boolean> = _autoBackupEnabled.asStateFlow()
+
+  private val _autoBackupIntervalHours = MutableStateFlow(prefs.getInt(KEY_AUTO_BACKUP_INTERVAL, 24))
+  val autoBackupIntervalHours: StateFlow<Int> = _autoBackupIntervalHours.asStateFlow()
+
+  private val _lastAutoBackupTimestamp = MutableStateFlow(prefs.getLong(KEY_LAST_AUTO_BACKUP_TIME, 0L))
+  val lastAutoBackupTimestamp: StateFlow<Long> = _lastAutoBackupTimestamp.asStateFlow()
+
+  private val _backupEncryptionEnabled = MutableStateFlow(prefs.getBoolean(KEY_BACKUP_ENCRYPTED, false))
+  val backupEncryptionEnabled: StateFlow<Boolean> = _backupEncryptionEnabled.asStateFlow()
+
+  fun setAutoBackupEnabled(enabled: Boolean) {
+    _autoBackupEnabled.value = enabled
+    prefs.edit().putBoolean(KEY_AUTO_BACKUP_ENABLED, enabled).apply()
+  }
+
+  fun setAutoBackupIntervalHours(hours: Int) {
+    _autoBackupIntervalHours.value = hours
+    prefs.edit().putInt(KEY_AUTO_BACKUP_INTERVAL, hours).apply()
+  }
+
+  fun setLastAutoBackupTimestamp(timestamp: Long) {
+    _lastAutoBackupTimestamp.value = timestamp
+    prefs.edit().putLong(KEY_LAST_AUTO_BACKUP_TIME, timestamp).apply()
+  }
+
+  fun setBackupEncryptionEnabled(enabled: Boolean) {
+    _backupEncryptionEnabled.value = enabled
+    prefs.edit().putBoolean(KEY_BACKUP_ENCRYPTED, enabled).apply()
+  }
+
+  // --- Market Data API Keys ---
+  private val _finnhubApiKey = MutableStateFlow(prefs.getString(KEY_FINNHUB_API_KEY, "") ?: "")
+  val finnhubApiKey: StateFlow<String> = _finnhubApiKey.asStateFlow()
+
+  private val _alphaVantageApiKey = MutableStateFlow(prefs.getString(KEY_ALPHA_VANTAGE_API_KEY, "") ?: "")
+  val alphaVantageApiKey: StateFlow<String> = _alphaVantageApiKey.asStateFlow()
+
+  fun setFinnhubApiKey(key: String) {
+    val clean = key.trim()
+    _finnhubApiKey.value = clean
+    prefs.edit().putString(KEY_FINNHUB_API_KEY, clean).apply()
+  }
+
+  fun setAlphaVantageApiKey(key: String) {
+    val clean = key.trim()
+    _alphaVantageApiKey.value = clean
+    prefs.edit().putString(KEY_ALPHA_VANTAGE_API_KEY, clean).apply()
+  }
+
+  // --- Clean Slate & Demo Data Tracking ---
+  fun isDemoDataPurged(): Boolean = prefs.getBoolean(KEY_DEMO_DATA_PURGED, false)
+
+  fun setDemoDataPurged(purged: Boolean) {
+    prefs.edit().putBoolean(KEY_DEMO_DATA_PURGED, purged).apply()
+  }
+
   companion object {
     private const val KEY_THEME_MODE = "key_theme_mode"
     private const val KEY_HOME_SECTIONS = "key_home_sections"
@@ -305,9 +328,13 @@ class UserPreferencesManager(context: Context) {
     private const val KEY_CURRENCY = "key_currency"
     private const val KEY_USER_NAME = "key_user_name"
     private const val KEY_GREETING = "key_greeting"
+    private const val KEY_AUTO_BACKUP_ENABLED = "key_auto_backup_enabled"
+    private const val KEY_AUTO_BACKUP_INTERVAL = "key_auto_backup_interval_hours"
+    private const val KEY_LAST_AUTO_BACKUP_TIME = "key_last_auto_backup_timestamp"
+    private const val KEY_BACKUP_ENCRYPTED = "key_backup_encrypted"
     private const val KEY_FINNHUB_API_KEY = "key_finnhub_api_key"
-    private const val KEY_FINNHUB_AUTO_SYNC = "key_finnhub_auto_sync"
     private const val KEY_ALPHA_VANTAGE_API_KEY = "key_alpha_vantage_api_key"
-    private const val KEY_ALPHA_VANTAGE_AUTO_SYNC = "key_alpha_vantage_auto_sync"
+    private const val KEY_DEMO_DATA_PURGED = "key_demo_data_purged"
   }
 }
+

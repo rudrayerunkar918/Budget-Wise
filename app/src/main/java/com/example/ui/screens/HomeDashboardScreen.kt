@@ -72,12 +72,10 @@ import com.example.data.model.LoanEntity
 import com.example.data.model.SavingsGoalEntity
 import com.example.data.model.SubscriptionEntity
 import com.example.data.model.ExpenseCategory
-import com.example.data.model.ExpenseLogEntity
 import com.example.data.preferences.HomeSectionItem
 import com.example.data.preferences.HomeSectionType
 import com.example.data.preferences.NavTabDestination
 import com.example.ui.components.CategoryDonutChart
-import com.example.ui.components.DailyExpenseLogSectionCard
 import com.example.ui.viewmodel.CategorySpendSummary
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -104,16 +102,12 @@ fun HomeDashboardScreen(
   totalSpentThisMonth: Double,
   categorySummaries: List<CategorySpendSummary>,
   overallBudget: Double?,
-  dailyExpenseLogs: List<ExpenseLogEntity> = emptyList(),
-  todayDailyTotal: Double = 0.0,
   onNavigateToTab: (NavTabDestination) -> Unit,
   onOpenEditHomeScreen: () -> Unit,
   onAddAccount: () -> Unit,
   onAccountClick: (AccountEntity) -> Unit = {},
   onExpenseClick: (ExpenseEntity) -> Unit = {},
   onOpenGeminiAssistant: () -> Unit = {},
-  onOpenAddExpenseLog: () -> Unit = {},
-  onDeleteExpenseLog: (ExpenseLogEntity) -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   val enabledSections = sections.filter { it.isEnabled }
@@ -129,21 +123,12 @@ fun HomeDashboardScreen(
       item(key = item.type.name) {
         when (item.type) {
           HomeSectionType.HOMEPAGE_BANNER -> {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-              HomepageBannerSection(
-                greeting = greeting,
-                userName = userName,
-                onOpenEditHome = onOpenEditHomeScreen,
-                onOpenGeminiAssistant = onOpenGeminiAssistant
-              )
-              DailyExpenseLogSectionCard(
-                dailyLogs = dailyExpenseLogs,
-                todayTotal = todayDailyTotal,
-                currencySymbol = currencySymbol,
-                onOpenAddLog = onOpenAddExpenseLog,
-                onDeleteLog = onDeleteExpenseLog
-              )
-            }
+            HomepageBannerSection(
+              greeting = greeting,
+              userName = userName,
+              onOpenEditHome = onOpenEditHomeScreen,
+              onOpenGeminiAssistant = onOpenGeminiAssistant
+            )
           }
           HomeSectionType.ACCOUNTS -> {
             AccountsCarouselSection(
@@ -430,13 +415,58 @@ private fun AccountsCarouselSection(
 ) {
   val scrollState = rememberScrollState()
 
-  Row(
-    modifier = Modifier
-      .fillMaxWidth()
-      .horizontalScroll(scrollState),
-    horizontalArrangement = Arrangement.spacedBy(10.dp)
-  ) {
-    accounts.forEach { account ->
+  if (accounts.isEmpty()) {
+    Card(
+      shape = RoundedCornerShape(16.dp),
+      colors = CardDefaults.cardColors(
+        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+      ),
+      modifier = Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(16.dp))
+        .clickable { onAddAccount() }
+        .testTag("card_empty_accounts_add")
+    ) {
+      Row(
+        modifier = Modifier.padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+      ) {
+        Icon(
+          imageVector = Icons.Default.AccountBalance,
+          contentDescription = "Add Account",
+          tint = MaterialTheme.colorScheme.primary,
+          modifier = Modifier.size(28.dp)
+        )
+        Column(modifier = Modifier.weight(1f)) {
+          Text(
+            text = "No accounts yet",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface
+          )
+          Text(
+            text = "Tap to add your bank account, cash, or card",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+          )
+        }
+        Text(
+          text = "+ Add",
+          style = MaterialTheme.typography.labelLarge,
+          fontWeight = FontWeight.Bold,
+          color = MaterialTheme.colorScheme.primary
+        )
+      }
+    }
+  } else {
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .horizontalScroll(scrollState),
+      horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+      accounts.forEach { account ->
       val txCount = expenses.count { it.account == account.name }
       val accColor = Color(account.colorHex)
       Card(
@@ -554,6 +584,7 @@ private fun AccountsCarouselSection(
       }
     }
   }
+  }
 }
 
 // 3. Accounts Vertical List
@@ -579,7 +610,14 @@ private fun AccountsListSection(
         .padding(16.dp),
       verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-      accounts.forEach { account ->
+      if (accounts.isEmpty()) {
+        Text(
+          text = "No accounts yet. Tap + to create your first account.",
+          style = MaterialTheme.typography.bodyMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+      } else {
+        accounts.forEach { account ->
         Row(
           modifier = Modifier
             .fillMaxWidth()
@@ -622,6 +660,7 @@ private fun AccountsListSection(
             )
           }
         }
+      }
       }
     }
   }
@@ -1586,7 +1625,15 @@ private fun PinnedTransactionsHomeSection(
 
       Spacer(modifier = Modifier.height(4.dp))
 
-      expenses.forEach { tx ->
+      if (expenses.isEmpty()) {
+        Text(
+          text = "No transactions yet. Tap + to record your first transaction.",
+          style = MaterialTheme.typography.bodyMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(vertical = 12.dp)
+        )
+      } else {
+        expenses.forEach { tx ->
         val category = ExpenseCategory.fromName(tx.category)
         val isIncome = tx.type == "INCOME"
         val isTransfer = tx.type == "TRANSFER"
@@ -1731,6 +1778,7 @@ private fun PinnedTransactionsHomeSection(
             }
           }
         }
+      }
       }
     }
   }

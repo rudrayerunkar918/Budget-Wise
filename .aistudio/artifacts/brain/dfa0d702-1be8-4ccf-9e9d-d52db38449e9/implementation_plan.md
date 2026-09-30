@@ -1,295 +1,97 @@
-# Financial Trading Platform Multi-Tier Database Architecture
+# Clean Slate & Disable Automatic Sample Data Seeding
 
-A production-grade, highly resilient data architecture designed for financial trading applications, combining **PostgreSQL** for strict ACID transactions and double-entry ledgering, **Redis** for sub-millisecond write-through caching to protect third-party API rate limits, and **TimescaleDB** for compressed time-series analytics, historical EOD candles, and portfolio net-worth tracking.
+Disable automatic insertion of starter demo data on application launch, completely purge all existing mock/demo entries across database tables, and establish a clean-slate architecture that preserves user-created data exclusively.
 
----
-
-### User Review & Critical Decisions
+## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following architectural decisions were confirmed based on your specifications and are locked into the system design:
+> The following user preferences were confirmed during clarification and govern this implementation:
+> - **Starter Sample Data**: Never automatically add sample data when opening the app.
+> - **Existing Demo Data**: Clear all existing demo data across tables (transactions, accounts, budgets, goals, loans, notifications, and portfolio stocks) to start with a pristine, empty database.
 
-- **Confirmed Decision 1 (TimescaleDB Scope)**: Focused on daily End-of-Day (EOD) OHLCV candles, corporate action adjusted prices, and historical portfolio net-worth snapshots. This eliminates unnecessary tick-level write overhead while enabling aggressive columnar compression and fast long-term chart queries.
-- **Confirmed Decision 2 (Redis Caching Model)**: Implemented as a proactive **write-through cache** with scheduled background worker pools (Celery / BullMQ / Go routine workers). The user-facing API reads strictly from Redis, while background workers manage rate-limited upstream calls (Alpha Vantage, Finnhub, NSE/BSE) without blocking client threads.
-- **Confirmed Decision 3 (PostgreSQL Transaction Engine)**: Modeled as an **immutable, double-entry append-only ledger** partitioned by month (`RANGE (created_at)`). Balances are never modified in place; instead, balance states are verified with cryptographic hash chaining and materialized view checkpoints.
+- **Confirmed Decision 1**: Permanently eliminate the startup call `repository.preseedDataIfEmpty()` in `ExpenseViewModel.kt` and replace it with a one-time migration/purge routine so the app never generates unsolicited mock data.
+- **Confirmed Decision 2**: Provide clear, inviting zero-data empty states across the Home Dashboard, Transactions, Accounts, Budgets, and Stocks screens, allowing users to enter their own real financial entries seamlessly without clutter.
 
 ---
 
 ### 1. Overview & Core Concept
 
-- **What It Does**: Decouples transactional banking/trading operations from volatile real-time market data streams and compute-heavy historical charting. 
-- **Target Audience & Workflows**: 
-  - Retail and institutional investors querying live watchlists, submitting trade orders, tracking portfolio equity curves, and running multi-year technical analytics.
-  - High-concurrency mobile and web client frontends requiring deterministic <50ms response times without hitting external provider 429 errors.
-- **Key Value**: 
-  - **Zero Rate-Limit Breaches**: Client requests never directly hit third-party financial APIs; background ingest workers buffer and distribute rate allowances.
-  - **Financial Integrity**: Append-only double-entry ledger prevents balance drift, double-spending, and concurrency race conditions.
-  - **Storage & Query Efficiency**: Columnar chunk compression in TimescaleDB achieves up to 90% disk reduction on historical price bars.
+- **What It Does**: Stops BudgetWise from injecting fake accounts (Main Checking, Cash Wallet, Sapphire Credit Card), dummy expenses (Netflix, Spotify, Tech Salary), demo loans, and sample stocks whenever transactions are empty. Clears all existing dummy data so users have a 100% clean database for their actual financial life.
+- **Target Audience / Persona**: Users seeking personal financial tracking who want their actual numbers, not pre-populated fictional records that distort net worth, cash flow, and stock portfolios.
+- **Key Value**: Eliminates recurring ghost records, provides true privacy and accuracy, and ensures a clean blank slate where users only see transactions and assets they explicitly add.
 
 ---
 
 ### 2. User Experience & Visual Design
 
-#### Key User Flows & System Interactions
+- **Key User Flows**:
+  1. **App Launch**: App opens directly to the Dashboard with real or zero-state data; no background thread silently inserts demo records into Room.
+  2. **Zero-State Experience**: When empty, screens show clean Material 3 illustrated placeholder cards with quick actions:
+     - Home Dashboard: "Welcome to BudgetWise" with a single action "Add Your First Account or Transaction".
+     - Transactions: "No transactions yet" with a primary "+ Add Transaction" button.
+     - Accounts: "No accounts connected" with an "Add Account" shortcut.
+     - Stocks & Investments: "Your portfolio is empty" with an "Add Stock / Mutual Fund" search button.
+  3. **Optional Demo Data Generator in Database Hub**: Move sample seeding to an explicit, opt-in button in the **Database Hub & Backups** settings screen ("Load Sample Data for Testing"), ensuring it only runs when explicitly tapped by the user.
 
-1. **Portfolio & Watchlist View**:
-   - Client requests user watchlist quotes.
-   - API reads directly from Redis Hash keys (`stock:quote:{symbol}`).
-   - Instant response (<5ms latency) with price, day high/low, change %, and data staleness timestamp.
-2. **Trade Order Execution**:
-   - User submits a Buy order.
-   - PostgreSQL begins an explicit serializable transaction:
-     - Verifies available cash in ledger checkpoint.
-     - Inserts order intent into `orders` table.
-     - Appends two balanced entries in `ledger_entries` (Debit: Cash Account, Credit: Stock Asset Account).
-     - Updates user portfolio position.
-   - Commits transaction and emits trade event to Redis Pub/Sub for immediate UI notification.
-3. **Historical Chart & Net-Worth Analysis**:
-   - User opens 1Y/5Y performance chart.
-   - Query routes to TimescaleDB hypertable `stock_eod_candles` or continuous aggregate view.
-   - Chunks older than 30 days are read directly from compressed columnar chunks.
+- **Visual Identity & Theme**:
+  - *Aesthetic Direction*: Refined, minimal financial ledger aesthetic adhering to Material Design 3.
+  - *Color Palette*: Slate dark theme and clean light theme using existing `MaterialTheme.colorScheme` tokens.
+  - *Empty State Styling*: M3 tonal cards with subtle rounded corners (`16.dp`), filled primary action buttons, and descriptive icons (`ReceiptLong`, `AccountBalance`, `TrendingUp`).
 
 ---
 
 ### 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: Double-Entry Append-Only Ledger vs. Mutable User Balance Columns**
-  - *Chosen Approach*: An immutable ledger (`ledger_entries`) partitioned monthly by date, where every financial movement consists of equal debits and credits.
-  - *Why*: Eliminates silent balance corruption, enables seamless auditing and historical reconciliation, and complies with financial regulatory standards.
-  - *Alternatives Considered*: Direct `UPDATE users SET balance = balance - amount` with `SELECT FOR UPDATE`. Rejected due to deadlock vulnerabilities, lack of audit trails, and concurrency bottlenecks under rapid order submissions.
+- **Decision 1: Removal of Automatic Pre-seeding on Startup**
+  - *Chosen Approach*: Completely remove `repository.preseedDataIfEmpty()` from `ExpenseViewModel.init`. Add a persistent DataStore/Preference flag `sampleDataPurged = true` and a dedicated repository cleanup function `clearAllDemoData()`.
+  - *Why*: Eliminates the root cause where empty state triggered automatic repopulation of dummy records.
+  - *Alternatives Considered*: Only checking if user has any accounts. Rejected because if a user wanted to wipe everything to reset, the old code would immediately repopulate dummy accounts and transactions.
 
-- **Decision 2: Proactive Background Polling vs. On-Demand Cache-Aside**
-  - *Chosen Approach*: Central background worker cron tasks poll external APIs at regulated intervals based on market open/close states and populate Redis.
-  - *Why*: Strict rate limits (e.g., Alpha Vantage 5-75 calls/min, Finnhub 30-60 calls/min) would immediately fail under traffic spikes if individual users triggered upstream calls on cache misses (Thundering Herd problem).
-  - *Alternatives Considered*: Standard Cache-Aside (Lazy loading). Rejected because simultaneous cache misses for popular tickers (`AAPL`, `TATAMOTORS`, `RELIANCE`) cause downstream API throttling and cascade failures.
-
-- **Decision 3: Dedicated TimescaleDB Engine vs. Standard PostgreSQL Tables**
-  - *Chosen Approach*: TimescaleDB extension on PostgreSQL utilizing hypertables, automated retention policies, and native columnar compression.
-  - *Why*: Native time-bucket partitioning, 90%+ storage savings via compression, and query performance that doesn't degrade as historical records grow into hundreds of millions.
+- **Decision 2: Comprehensive Database Purge**
+  - *Chosen Approach*: Clear all tables (`expenses`, `accounts`, `subscriptions`, `budgets`, `savings_goals`, `loans`, `notification_logs`, `stocks`, `sip_investments`, `conditional_mandates`).
+  - *Why*: Delivers the requested clean slate immediately upon updating.
+  - *Alternatives Considered*: Retaining the dummy accounts with $0 balance. Rejected because the user specifically chose to clear all demo data.
 
 ---
 
 ### 4. Technical Architecture & Data Strategy
 
-#### High-Level System Architecture Diagram
-
 ```
-                 ┌──────────────────────────────────────────────────┐
-                 │          Client Mobile & Web Applications        │
-                 └─────────────────────────┬────────────────────────┘
-                                           │ HTTPS / WebSocket
-                                           ▼
-                 ┌──────────────────────────────────────────────────┐
-                 │            API Gateway & Trading Services         │
-                 └───────┬─────────────────┬─────────────────┬──────┘
-                         │                 │                 │
-             Read Hot    │      ACID       │   Timeseries    │
-            Stock Data   │   Order Exec    │  EOD & Charts   │
-                         ▼                 ▼                 ▼
-          ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────┐
-          │       REDIS       │  │    POSTGRESQL     │  │    TIMESCALEDB    │
-          │  (Write-Through)  │  │   (ACID Core)     │  │   (Time-Series)   │
-          ├───────────────────┤  ├───────────────────┤  ├───────────────────┤
-          │ • Live Quote Hash │  │ • User Accounts   │  │ • EOD OHLCV Bars  │
-          │ • Rate Limiter    │  │ • Watchlists      │  │ • Net-Worth Snaps │
-          │ • Market Status   │  │ • Double-Entry    │  │ • Hypertable      │
-          │ • Pub/Sub Events  │  │   Monthly Ledger  │  │   Compression     │
-          └─────────▲─────────┘  └───────────────────┘  └───────────────────┘
-                    │ Writes
-         ┌──────────┴───────────────┐
-         │ Ingest Workers & Schedulers
-         │ (Respects Third-Party    │
-         │  API Rate Limits)        │
-         └──────────▲───────────────┘
-                    │ Rate-Limited Ingest
-         ┌──────────┴───────────────┐
-         │ Third-Party Market APIs  │
-         │ (Alpha Vantage / Finnhub)│
-         └──────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                       BudgetWise App                        │
+│                                                             │
+│   ┌─────────────────────────────────────────────────────┐   │
+│   │                 ExpenseViewModel                    │   │
+│   │  • Removes repository.preseedDataIfEmpty() on init  │   │
+│   │  • Runs one-time clearAllDemoData() migration       │   │
+│   │  • Exposes empty states reactively                  │   │
+│   └──────────────────────────┬──────────────────────────┘   │
+│                              │                              │
+│                              ▼                              │
+│   ┌─────────────────────────────────────────────────────┐   │
+│   │                 ExpenseRepository                   │   │
+│   │  • clearAllData() / purgeDemoData()                 │   │
+│   │  • seedSampleData() [Only manual trigger in Hub]    │   │
+│   └──────────────────────────┬──────────────────────────┘   │
+│                              │                              │
+│                              ▼                              │
+│   ┌─────────────────────────────────────────────────────┐   │
+│   │                  Room Database                      │   │
+│   │  • ExpensesDao   • AccountDao   • StockDao          │   │
+│   │  • BudgetDao     • GoalDao      • LoanDao           │   │
+│   │  • SubDao        • MandateDao   • SipDao            │   │
+│   └─────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
 ```
 
----
-
-#### 1. PostgreSQL Schema: Core Accounts, Watchlists & Partitioned Ledger
-
-```sql
--- 1. User & Account Identification
-CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
-    full_name VARCHAR(150) NOT NULL,
-    kyc_status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- Internal Accounts for Double-Entry System (Assets, Liabilities, Equity)
-CREATE TYPE account_type AS ENUM ('CASH_WALLET', 'EQUITY_HOLDING', 'CLEARING_ESCROW', 'FEE_EXPENSE');
-
-CREATE TABLE accounts (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    account_type account_type NOT NULL,
-    currency VARCHAR(10) NOT NULL DEFAULT 'INR', -- or USD
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- 2. User Watchlists
-CREATE TABLE watchlists (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name VARCHAR(64) NOT NULL DEFAULT 'My Watchlist',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE watchlist_items (
-    watchlist_id UUID NOT NULL REFERENCES watchlists(id) ON DELETE CASCADE,
-    symbol VARCHAR(32) NOT NULL,
-    exchange VARCHAR(16) NOT NULL,
-    display_order INT NOT NULL DEFAULT 0,
-    added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (watchlist_id, symbol, exchange)
-);
-
--- 3. Trade Orders
-CREATE TYPE order_status AS ENUM ('PENDING', 'FILLED', 'PARTIALLY_FILLED', 'CANCELLED', 'REJECTED');
-CREATE TYPE order_side AS ENUM ('BUY', 'SELL');
-
-CREATE TABLE orders (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id),
-    symbol VARCHAR(32) NOT NULL,
-    exchange VARCHAR(16) NOT NULL,
-    side order_side NOT NULL,
-    quantity NUMERIC(18, 4) NOT NULL CHECK (quantity > 0),
-    filled_quantity NUMERIC(18, 4) NOT NULL DEFAULT 0,
-    limit_price NUMERIC(18, 4),
-    status order_status NOT NULL DEFAULT 'PENDING',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- 4. Double-Entry Partitioned Financial Ledger
-CREATE TABLE ledger_entries (
-    id UUID NOT NULL DEFAULT gen_random_uuid(),
-    transaction_id UUID NOT NULL, -- Grouping ID for double-entry balance pair
-    account_id UUID NOT NULL REFERENCES accounts(id),
-    order_id UUID REFERENCES orders(id),
-    amount NUMERIC(18, 4) NOT NULL, -- Positive for Debit, Negative for Credit
-    currency VARCHAR(10) NOT NULL,
-    description TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (id, created_at)
-) PARTITION BY RANGE (created_at);
-
--- Monthly Partition Tables (Automated with pg_partman or cron)
-CREATE TABLE ledger_entries_2026_09 PARTITION OF ledger_entries
-    FOR VALUES FROM ('2026-09-01 00:00:00+00') TO ('2026-10-01 00:00:00+00');
-CREATE TABLE ledger_entries_2026_10 PARTITION OF ledger_entries
-    FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2026-11-01 00:00:00+00');
-
--- Indices for Ledger Performance
-CREATE INDEX idx_ledger_account_created ON ledger_entries(account_id, created_at DESC);
-CREATE INDEX idx_ledger_tx_id ON ledger_entries(transaction_id);
-```
-
----
-
-#### 2. Redis Data Structures: Proactive Write-Through Cache
-
-| Key Pattern | Redis Type | TTL | Purpose |
-| :--- | :--- | :--- | :--- |
-| `quote:{exchange}:{symbol}` | `HASH` | 120s | Real-time quote snapshot (LTP, open, high, low, close, volume, timestamp) |
-| `active_symbols` | `SET` | Persistent | Unique active symbols across all user watchlists and open orders |
-| `rate_limit:vendor:{vendor_name}` | `STRING` | 60s | Token bucket / sliding window counter for external API calls |
-| `market_status:{exchange}` | `STRING` | 300s | Current market state (`OPEN`, `PRE_OPEN`, `CLOSED`) |
-| `channel:orders:{user_id}` | `Pub/Sub` | - | Real-time order fill and balance update event stream |
-
-**Example Redis Quote Hash (`quote:NSE:TATAMOTORS`):**
-```
-price: "441.50"
-open: "438.00"
-high: "445.20"
-low: "436.80"
-prev_close: "437.90"
-volume: "12845090"
-change_percent: "0.82"
-updated_at: "1790666400"
-source: "ALPHA_VANTAGE"
-```
-
----
-
-#### 3. TimescaleDB Schema: EOD Candles & Historical Net-Worth Snapshots
-
-```sql
--- 1. Historical Daily Stock Candles (OHLCV)
-CREATE TABLE stock_eod_candles (
-    time TIMESTAMPTZ NOT NULL,
-    symbol VARCHAR(32) NOT NULL,
-    exchange VARCHAR(16) NOT NULL,
-    open NUMERIC(14, 4) NOT NULL,
-    high NUMERIC(14, 4) NOT NULL,
-    low NUMERIC(14, 4) NOT NULL,
-    close NUMERIC(14, 4) NOT NULL,
-    volume BIGINT NOT NULL,
-    adjusted_close NUMERIC(14, 4),
-    PRIMARY KEY (time, symbol, exchange)
-);
-
--- Convert to TimescaleDB Hypertable
-SELECT create_hypertable('stock_eod_candles', 'time', chunk_time_interval => INTERVAL '1 month');
-
--- Enable Columnar Compression (After 30 days)
-ALTER TABLE stock_eod_candles SET (
-    timescaledb.compress,
-    timescaledb.compress_segmentby = 'symbol, exchange',
-    timescaledb.compress_orderby = 'time DESC'
-);
-SELECT add_compression_policy('stock_eod_candles', INTERVAL '30 days');
-
--- 2. Daily User Portfolio Net-Worth Snapshots
-CREATE TABLE user_networth_snapshots (
-    time TIMESTAMPTZ NOT NULL,
-    user_id UUID NOT NULL,
-    cash_balance NUMERIC(18, 4) NOT NULL,
-    invested_equity NUMERIC(18, 4) NOT NULL,
-    total_net_worth NUMERIC(18, 4) NOT NULL,
-    currency VARCHAR(10) NOT NULL DEFAULT 'INR',
-    PRIMARY KEY (time, user_id)
-);
-
--- Convert to Hypertable with 3-Month Chunks
-SELECT create_hypertable('user_networth_snapshots', 'time', chunk_time_interval => INTERVAL '3 months');
-
--- Enable Compression on Historical Net-Worth Data (After 60 days)
-ALTER TABLE user_networth_snapshots SET (
-    timescaledb.compress,
-    timescaledb.compress_segmentby = 'user_id',
-    timescaledb.compress_orderby = 'time DESC'
-);
-SELECT add_compression_policy('user_networth_snapshots', INTERVAL '60 days');
-```
-
----
-
-### 5. Implementation Roadmap & Verification Plan
-
-1. **Database Provisioning & Extensions**:
-   - Install PostgreSQL 16+ with `timescaledb` extension enabled.
-   - Configure Redis Cluster/Instance with eviction policy `volatile-lru`.
-2. **Schema & Migration Scripts**:
-   - Execute DDL for accounts, double-entry partitioned ledger, watchlists, and orders.
-   - Execute TimescaleDB hypertables, compression policies, and index configurations.
-3. **Background Ingestion & Caching Engine**:
-   - Implement scheduler worker: iterates over Redis `active_symbols` set.
-   - Respect provider rate limits using Redis sliding-window token bucket.
-   - Write freshly fetched quotes to Redis hashes with atomic pipeline operations.
-4. **End-of-Day Batch Worker**:
-   - At market close, trigger daily reconciler:
-     - Downloads final official EOD prices.
-     - Bulk-inserts into `stock_eod_candles`.
-     - Calculates each user's end-of-day equity balance and appends into `user_networth_snapshots`.
-5. **Ledger Integrity Audit Verification**:
-   - Run periodic automated test checking `SUM(amount) = 0` per `transaction_id`.
+- **Data Model & State**:
+  - Room tables are cleared cleanly via Room transactions or individual DAO clear methods.
+  - `UserPreferencesManager` stores `sampleDataPurged = true` so the purge executes once and the app remains permanently clean.
+- **Interactive Component & State Mapping**:
+  - `ExpenseViewModel`:
+    - `clearAllData()`: Invokes repository purge, resets state flows (`geminiStockVerdict`, `allStocks`, `allExpenses`).
+    - `seedDemoDataManually()`: Exclusively triggered if user clicks "Load Demo Data" in Settings/Database Hub.
+  - `DatabaseHubScreen`:
+    - "Database Actions" card includes "Reset to Clean Database" and "Load Sample Data (Optional)" with confirmation dialogs.
+  - UI screens:
+    - Display standard M3 Empty States when item counts are 0.

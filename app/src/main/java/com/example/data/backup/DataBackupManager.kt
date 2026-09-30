@@ -4,23 +4,36 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import androidx.core.content.FileProvider
 import com.example.data.db.AppDatabase
 import com.example.data.model.AccountEntity
 import com.example.data.model.BudgetEntity
+import com.example.data.model.ConditionalMandateEntity
 import com.example.data.model.ExpenseEntity
 import com.example.data.model.LoanEntity
+import com.example.data.model.MutualFundSipEntity
 import com.example.data.model.SavingsGoalEntity
 import com.example.data.model.StockEntity
 import com.example.data.model.SubscriptionEntity
+import com.example.data.model.TransactionShortcutEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.nio.charset.StandardCharsets
+import java.security.SecureRandom
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import javax.crypto.Cipher
+import javax.crypto.SecretKeyFactory
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.PBEKeySpec
+import javax.crypto.spec.SecretKeySpec
 
 enum class ImportMode {
   MERGE,
@@ -37,8 +50,16 @@ data class BackupSummary(
   val subscriptionsCount: Int,
   val loansCount: Int,
   val stocksCount: Int,
+  val sipsCount: Int = 0,
+  val mandatesCount: Int = 0,
+  val shortcutsCount: Int = 0,
+  val isEncrypted: Boolean = false,
   val rawJson: String
-)
+) {
+  val totalRecords: Int
+    get() = expensesCount + accountsCount + budgetsCount + goalsCount +
+        subscriptionsCount + loansCount + stocksCount + sipsCount + mandatesCount + shortcutsCount
+}
 
 data class ImportResultStats(
   val importedExpenses: Int,
@@ -48,12 +69,120 @@ data class ImportResultStats(
   val importedSubscriptions: Int,
   val importedLoans: Int,
   val importedStocks: Int,
+  val importedSips: Int = 0,
+  val importedMandates: Int = 0,
+  val importedShortcuts: Int = 0,
   val isReplaceMode: Boolean
+) {
+  val totalImported: Int
+    get() = importedExpenses + importedAccounts + importedBudgets + importedGoals +
+        importedSubscriptions + importedLoans + importedStocks + importedSips + importedMandates + importedShortcuts
+}
+
+data class DatabaseSnapshotInfo(
+  val file: File,
+  val fileName: String,
+  val timestamp: Long,
+  val formattedDate: String,
+  val sizeBytes: Long,
+  val formattedSize: String,
+  val recordCount: Int,
+  val isAutomated: Boolean,
+  val isEncrypted: Boolean
+)
+
+data class DatabaseHealthInfo(
+  val dbName: String,
+  val dbSizeBytes: Long,
+  val formattedSize: String,
+  val version: Int,
+  val tableCounts: Map<String, Int>,
+  val totalRecords: Int,
+  val integrityStatus: String,
+  val lastSnapshotTime: Long?
 )
 
 object DataBackupManager {
 
-  suspend fun exportAllDataToJson(context: Context): Pair<File, String> = withContext(Dispatchers.IO) {
+  private const val MAGIC_HEADER = "BWISE_ENC_V1"
+  private const val ITERATION_COUNT = 65536
+  private const val KEY_LENGTH = 256
+  private const val GCM_TAG_LENGTH = 128
+  private const val SALT_LENGTH = 16
+  private const val IV_LENGTH = 12
+
+  // ==========================================
+  // 1. AES-256 GCM Authenticated Encryption
+  // ==========================================
+
+  fun isEncryptedPayload(bytes: ByteArray): Boolean {
+    val magicBytes = MAGIC_HEADER.toByteArray(StandardCharsets.UTF_8)
+    if (bytes.size < magicBytes.size) return false
+    for (i in magicBytes.indices) {
+      if (bytes[i] != magicBytes[i]) return false
+    }
+    return true
+  }
+
+  fun encryptPayload(plaintext: String, passphrase: String): ByteArray {
+    require(passphrase.isNotBlank()) { "Passphrase cannot be empty" }
+    val random = SecureRandom()
+    val salt = ByteArray(SALT_LENGTH).apply { random.nextBytes(this) }
+    val iv = ByteArray(IV_LENGTH).apply { random.nextBytes(this) }
+
+    val keySpec = PBEKeySpec(passphrase.toCharArray(), salt, ITERATION_COUNT, KEY_LENGTH)
+    val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+    val keyBytes = factory.generateSecret(keySpec).encoded
+    val secretKey = SecretKeySpec(keyBytes, "AES")
+
+    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+    cipher.init(Cipher.ENCRYPT_MODE, secretKey, GCMParameterSpec(GCM_TAG_LENGTH, iv))
+    val cipherBytes = cipher.doFinal(plaintext.toByteArray(StandardCharsets.UTF_8))
+
+    val outputStream = ByteArrayOutputStream()
+    outputStream.write(MAGIC_HEADER.toByteArray(StandardCharsets.UTF_8))
+    outputStream.write(salt.size)
+    outputStream.write(salt)
+    outputStream.write(iv.size)
+    outputStream.write(iv)
+    outputStream.write(cipherBytes)
+    return outputStream.toByteArray()
+  }
+
+  fun decryptPayload(bytes: ByteArray, passphrase: String): String {
+    require(isEncryptedPayload(bytes)) { "Data is not in encrypted BudgetWise format" }
+    require(passphrase.isNotBlank()) { "Passphrase cannot be empty" }
+
+    val magicBytes = MAGIC_HEADER.toByteArray(StandardCharsets.UTF_8)
+    val inputStream = ByteArrayInputStream(bytes)
+    inputStream.skip(magicBytes.size.toLong())
+
+    val saltSize = inputStream.read()
+    val salt = ByteArray(saltSize)
+    inputStream.read(salt)
+
+    val ivSize = inputStream.read()
+    val iv = ByteArray(ivSize)
+    inputStream.read(iv)
+
+    val cipherBytes = inputStream.readBytes()
+
+    val keySpec = PBEKeySpec(passphrase.toCharArray(), salt, ITERATION_COUNT, KEY_LENGTH)
+    val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+    val keyBytes = factory.generateSecret(keySpec).encoded
+    val secretKey = SecretKeySpec(keyBytes, "AES")
+
+    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+    cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(GCM_TAG_LENGTH, iv))
+    val plainBytes = cipher.doFinal(cipherBytes)
+    return String(plainBytes, StandardCharsets.UTF_8)
+  }
+
+  // ==========================================
+  // 2. Export Database to JSON / Encrypted File
+  // ==========================================
+
+  suspend fun exportAllDataToJson(context: Context, passphrase: String? = null): Pair<File, String> = withContext(Dispatchers.IO) {
     val db = AppDatabase.getDatabase(context)
 
     val expenses = db.expenseDao().getAllExpensesList()
@@ -63,9 +192,12 @@ object DataBackupManager {
     val subscriptions = db.subscriptionDao().getAllSubscriptionsList()
     val loans = db.loanDao().getAllLoansList()
     val stocks = db.stockDao().getAllStocksList()
+    val sips = db.mutualFundSipDao().getAllSipsList()
+    val mandates = db.conditionalMandateDao().getAllMandatesList()
+    val shortcuts = db.transactionShortcutDao().getAllShortcutsList()
 
     val root = JSONObject()
-    root.put("version", 1)
+    root.put("version", 2)
     root.put("appName", "BudgetWise Financial & Stock Tracker")
     val now = System.currentTimeMillis()
     root.put("exportTimestamp", now)
@@ -81,6 +213,9 @@ object DataBackupManager {
     countsObj.put("subscriptions", subscriptions.size)
     countsObj.put("loans", loans.size)
     countsObj.put("stocks", stocks.size)
+    countsObj.put("sips", sips.size)
+    countsObj.put("mandates", mandates.size)
+    countsObj.put("shortcuts", shortcuts.size)
     root.put("counts", countsObj)
 
     // 1. Expenses
@@ -197,11 +332,76 @@ object DataBackupManager {
     }
     root.put("stocks", stockArray)
 
+    // 8. Mutual Fund SIPs
+    val sipArray = JSONArray()
+    for (sip in sips) {
+      val obj = JSONObject()
+      obj.put("id", sip.id)
+      obj.put("schemeCode", sip.schemeCode)
+      obj.put("schemeName", sip.schemeName)
+      obj.put("installmentAmount", sip.installmentAmount)
+      obj.put("frequency", sip.frequency)
+      obj.put("debitAccount", sip.debitAccount)
+      obj.put("sipDayOfMonth", sip.sipDayOfMonth)
+      obj.put("nextExecutionDate", sip.nextExecutionDate)
+      obj.put("isActive", sip.isActive)
+      obj.put("totalInvested", sip.totalInvested)
+      obj.put("installmentsCompleted", sip.installmentsCompleted)
+      obj.put("notes", sip.notes)
+      sipArray.put(obj)
+    }
+    root.put("sips", sipArray)
+
+    // 9. Conditional Mandates
+    val mandateArray = JSONArray()
+    for (m in mandates) {
+      val obj = JSONObject()
+      obj.put("id", m.id)
+      obj.put("title", m.title)
+      obj.put("sourceAccount", m.sourceAccount)
+      obj.put("targetAccount", m.targetAccount)
+      obj.put("conditionType", m.conditionType)
+      obj.put("thresholdAmount", m.thresholdAmount)
+      obj.put("transferAmount", m.transferAmount)
+      obj.put("isEnabled", m.isEnabled)
+      obj.put("lastTriggeredAt", m.lastTriggeredAt)
+      obj.put("totalTriggeredCount", m.totalTriggeredCount)
+      obj.put("notes", m.notes)
+      mandateArray.put(obj)
+    }
+    root.put("mandates", mandateArray)
+
+    // 10. Quick Shortcuts
+    val shortcutArray = JSONArray()
+    for (sc in shortcuts) {
+      val obj = JSONObject()
+      obj.put("id", sc.id)
+      obj.put("title", sc.title)
+      obj.put("amount", sc.amount)
+      obj.put("category", sc.category)
+      obj.put("type", sc.type)
+      obj.put("account", sc.account)
+      obj.put("iconEmoji", sc.iconEmoji)
+      obj.put("orderIndex", sc.orderIndex)
+      shortcutArray.put(obj)
+    }
+    root.put("shortcuts", shortcutArray)
+
     val jsonString = root.toString(2)
     val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
     val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-    val file = File(exportDir, "budgetwise_backup_$timestamp.json")
-    file.writeText(jsonString)
+
+    val isEncrypted = !passphrase.isNullOrBlank()
+    val file = if (isEncrypted) {
+      val encFile = File(exportDir, "budgetwise_encrypted_$timestamp.bwise")
+      val encryptedBytes = encryptPayload(jsonString, passphrase!!)
+      encFile.writeBytes(encryptedBytes)
+      encFile
+    } else {
+      val plainFile = File(exportDir, "budgetwise_backup_$timestamp.json")
+      plainFile.writeText(jsonString)
+      plainFile
+    }
 
     Pair(file, jsonString)
   }
@@ -258,6 +458,155 @@ object DataBackupManager {
     clipboard.setPrimaryClip(clip)
   }
 
+  fun openGoogleDrive(context: Context) {
+    try {
+      val driveIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://drive.google.com/drive/my-drive")).apply {
+        setPackage("com.google.android.apps.docs")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      }
+      context.startActivity(driveIntent)
+    } catch (_: Exception) {
+      try {
+        val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://drive.google.com/drive/my-drive")).apply {
+          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(webIntent)
+      } catch (_: Exception) {}
+    }
+  }
+
+  fun openGoogleDriveBackupsSearch(context: Context) {
+    try {
+      val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://drive.google.com/drive/search?q=BudgetWise")).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      }
+      context.startActivity(intent)
+    } catch (_: Exception) {}
+  }
+
+  fun uploadBackupToGoogleDrive(context: Context, file: File, mimeType: String, title: String) {
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+      type = mimeType
+      putExtra(Intent.EXTRA_STREAM, uri)
+      putExtra(Intent.EXTRA_SUBJECT, title)
+      addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      setPackage("com.google.android.apps.docs")
+    }
+    try {
+      sendIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      context.startActivity(sendIntent)
+    } catch (_: Exception) {
+      shareFile(context, file, mimeType, "Save to Google Drive: $title")
+    }
+  }
+
+  // ==========================================
+  // 3. Local Rolling Snapshot System
+  // ==========================================
+
+  private fun getSnapshotsDir(context: Context): File {
+    return File(context.filesDir, "snapshots").apply { mkdirs() }
+  }
+
+  suspend fun createLocalSnapshot(
+    context: Context,
+    isAutomated: Boolean,
+    passphrase: String? = null,
+    maxRetained: Int = 7
+  ): DatabaseSnapshotInfo = withContext(Dispatchers.IO) {
+    val dir = getSnapshotsDir(context)
+    val now = System.currentTimeMillis()
+    val dateTag = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date(now))
+    val autoTag = if (isAutomated) "auto" else "manual"
+    val isEncrypted = !passphrase.isNullOrBlank()
+    val ext = if (isEncrypted) "bwise" else "json"
+    val targetFile = File(dir, "snapshot_${dateTag}_${autoTag}.$ext")
+
+    val (_, jsonString) = exportAllDataToJson(context, passphrase = null)
+
+    if (isEncrypted) {
+      val encryptedBytes = encryptPayload(jsonString, passphrase!!)
+      targetFile.writeBytes(encryptedBytes)
+    } else {
+      targetFile.writeText(jsonString)
+    }
+
+    // Read summary count
+    val summary = parseBackupJson(jsonString)
+
+    // Enforce retention policy for automated snapshots
+    enforceSnapshotRetention(dir, maxRetained)
+
+    DatabaseSnapshotInfo(
+      file = targetFile,
+      fileName = targetFile.name,
+      timestamp = now,
+      formattedDate = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault()).format(Date(now)),
+      sizeBytes = targetFile.length(),
+      formattedSize = formatBytes(targetFile.length()),
+      recordCount = summary.totalRecords,
+      isAutomated = isAutomated,
+      isEncrypted = isEncrypted
+    )
+  }
+
+  private fun enforceSnapshotRetention(dir: File, maxRetained: Int) {
+    val autoFiles = dir.listFiles { f -> f.isFile && f.name.contains("_auto.") } ?: return
+    if (autoFiles.size > maxRetained) {
+      val sorted = autoFiles.sortedBy { it.lastModified() }
+      val toDelete = sorted.take(autoFiles.size - maxRetained)
+      toDelete.forEach { it.delete() }
+    }
+  }
+
+  suspend fun listSnapshots(context: Context): List<DatabaseSnapshotInfo> = withContext(Dispatchers.IO) {
+    val dir = getSnapshotsDir(context)
+    val files = dir.listFiles { f -> f.isFile && (f.name.endsWith(".json") || f.name.endsWith(".bwise")) } ?: return@withContext emptyList()
+
+    files.sortedByDescending { it.lastModified() }.map { f ->
+      val isEncrypted = f.name.endsWith(".bwise") || f.name.contains("encrypted")
+      val isAutomated = f.name.contains("_auto.")
+      val recordCount = if (!isEncrypted) {
+        try {
+          val text = f.readText()
+          val obj = JSONObject(text)
+          val counts = obj.optJSONObject("counts")
+          if (counts != null) {
+            counts.optInt("expenses") + counts.optInt("accounts") + counts.optInt("stocks") +
+                counts.optInt("budgets") + counts.optInt("goals") + counts.optInt("subscriptions") + counts.optInt("loans")
+          } else {
+            0
+          }
+        } catch (_: Exception) {
+          0
+        }
+      } else {
+        0
+      }
+
+      DatabaseSnapshotInfo(
+        file = f,
+        fileName = f.name,
+        timestamp = f.lastModified(),
+        formattedDate = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault()).format(Date(f.lastModified())),
+        sizeBytes = f.length(),
+        formattedSize = formatBytes(f.length()),
+        recordCount = recordCount,
+        isAutomated = isAutomated,
+        isEncrypted = isEncrypted
+      )
+    }
+  }
+
+  fun deleteSnapshot(snapshotFile: File): Boolean {
+    return snapshotFile.exists() && snapshotFile.delete()
+  }
+
+  // ==========================================
+  // 4. Parse & Restore Engine
+  // ==========================================
+
   fun parseBackupJson(jsonString: String): BackupSummary {
     val obj = JSONObject(jsonString)
     val version = obj.optInt("version", 1)
@@ -270,6 +619,9 @@ object DataBackupManager {
     val subscriptionsCount = obj.optJSONArray("subscriptions")?.length() ?: 0
     val loansCount = obj.optJSONArray("loans")?.length() ?: 0
     val stocksCount = obj.optJSONArray("stocks")?.length() ?: 0
+    val sipsCount = obj.optJSONArray("sips")?.length() ?: 0
+    val mandatesCount = obj.optJSONArray("mandates")?.length() ?: 0
+    val shortcutsCount = obj.optJSONArray("shortcuts")?.length() ?: 0
 
     return BackupSummary(
       version = version,
@@ -281,6 +633,10 @@ object DataBackupManager {
       subscriptionsCount = subscriptionsCount,
       loansCount = loansCount,
       stocksCount = stocksCount,
+      sipsCount = sipsCount,
+      mandatesCount = mandatesCount,
+      shortcutsCount = shortcutsCount,
+      isEncrypted = false,
       rawJson = jsonString
     )
   }
@@ -297,6 +653,9 @@ object DataBackupManager {
       db.subscriptionDao().clearAll()
       db.loanDao().clearAll()
       db.stockDao().clearAll()
+      db.mutualFundSipDao().clearAll()
+      db.conditionalMandateDao().clearAll()
+      db.transactionShortcutDao().clearAll()
     }
 
     // 1. Accounts
@@ -470,6 +829,83 @@ object DataBackupManager {
       importedStocks = stocksList.size
     }
 
+    // 8. Mutual Fund SIPs
+    var importedSips = 0
+    val sipArray = root.optJSONArray("sips")
+    if (sipArray != null) {
+      val sipList = mutableListOf<MutualFundSipEntity>()
+      for (i in 0 until sipArray.length()) {
+        val sp = sipArray.getJSONObject(i)
+        sipList.add(
+          MutualFundSipEntity(
+            id = if (mode == ImportMode.REPLACE) sp.optLong("id", 0L) else 0L,
+            schemeCode = sp.optString("schemeCode", ""),
+            schemeName = sp.optString("schemeName", sp.optString("fundName", "SIP Fund")),
+            installmentAmount = sp.optDouble("installmentAmount", 1000.0),
+            frequency = sp.optString("frequency", "Monthly"),
+            debitAccount = sp.optString("debitAccount", sp.optString("accountName", "Main Checking")),
+            sipDayOfMonth = sp.optInt("sipDayOfMonth", sp.optInt("dayOfMonth", 5)),
+            nextExecutionDate = sp.optLong("nextExecutionDate", System.currentTimeMillis() + 86400000L * 30),
+            isActive = sp.optBoolean("isActive", true),
+            totalInvested = sp.optDouble("totalInvested", 0.0),
+            installmentsCompleted = sp.optInt("installmentsCompleted", 0),
+            notes = sp.optString("notes", "")
+          )
+        )
+      }
+      db.mutualFundSipDao().insertSips(sipList)
+      importedSips = sipList.size
+    }
+
+    // 9. Conditional Mandates
+    var importedMandates = 0
+    val mandateArray = root.optJSONArray("mandates")
+    if (mandateArray != null) {
+      for (i in 0 until mandateArray.length()) {
+        val m = mandateArray.getJSONObject(i)
+        db.conditionalMandateDao().insertMandate(
+          ConditionalMandateEntity(
+            id = if (mode == ImportMode.REPLACE) m.optLong("id", 0L) else 0L,
+            title = m.optString("title", "Mandate"),
+            sourceAccount = m.optString("sourceAccount", ""),
+            targetAccount = m.optString("targetAccount", ""),
+            conditionType = m.optString("conditionType", "BALANCE_BELOW"),
+            thresholdAmount = m.optDouble("thresholdAmount", 1000.0),
+            transferAmount = m.optDouble("transferAmount", 500.0),
+            isEnabled = m.optBoolean("isEnabled", true),
+            lastTriggeredAt = m.optLong("lastTriggeredAt", m.optLong("lastTriggered", 0L)),
+            totalTriggeredCount = m.optInt("totalTriggeredCount", 0),
+            notes = m.optString("notes", m.optString("description", ""))
+          )
+        )
+        importedMandates++
+      }
+    }
+
+    // 10. Quick Shortcuts
+    var importedShortcuts = 0
+    val shortcutArray = root.optJSONArray("shortcuts")
+    if (shortcutArray != null) {
+      val shortcutList = mutableListOf<TransactionShortcutEntity>()
+      for (i in 0 until shortcutArray.length()) {
+        val sc = shortcutArray.getJSONObject(i)
+        shortcutList.add(
+          TransactionShortcutEntity(
+            id = if (mode == ImportMode.REPLACE) sc.optLong("id", 0L) else 0L,
+            title = sc.optString("title", sc.optString("label", "Shortcut")),
+            amount = sc.optDouble("amount", 50.0),
+            category = sc.optString("category", "FOOD"),
+            type = sc.optString("type", "EXPENSE"),
+            account = sc.optString("account", "Main Checking"),
+            iconEmoji = sc.optString("iconEmoji", "⚡"),
+            orderIndex = sc.optInt("orderIndex", i)
+          )
+        )
+      }
+      db.transactionShortcutDao().insertShortcuts(shortcutList)
+      importedShortcuts = shortcutList.size
+    }
+
     ImportResultStats(
       importedExpenses = importedExpenses,
       importedAccounts = importedAccounts,
@@ -478,7 +914,95 @@ object DataBackupManager {
       importedSubscriptions = importedSubscriptions,
       importedLoans = importedLoans,
       importedStocks = importedStocks,
+      importedSips = importedSips,
+      importedMandates = importedMandates,
+      importedShortcuts = importedShortcuts,
       isReplaceMode = mode == ImportMode.REPLACE
     )
+  }
+
+  // ==========================================
+  // 5. Database Diagnostics & Maintenance
+  // ==========================================
+
+  suspend fun getDatabaseHealth(context: Context): DatabaseHealthInfo = withContext(Dispatchers.IO) {
+    val db = AppDatabase.getDatabase(context)
+    val dbFile = context.getDatabasePath("expense_tracker.db")
+
+    var totalBytes = if (dbFile.exists()) dbFile.length() else 0L
+    val walFile = File(dbFile.parentFile, "expense_tracker.db-wal")
+    if (walFile.exists()) totalBytes += walFile.length()
+    val shmFile = File(dbFile.parentFile, "expense_tracker.db-shm")
+    if (shmFile.exists()) totalBytes += shmFile.length()
+
+    val expenses = db.expenseDao().getAllExpensesList().size
+    val accounts = db.accountDao().getAllAccountsList().size
+    val budgets = db.budgetDao().getAllBudgetsList().size
+    val goals = db.savingsGoalDao().getAllGoalsList().size
+    val subs = db.subscriptionDao().getAllSubscriptionsList().size
+    val loans = db.loanDao().getAllLoansList().size
+    val stocks = db.stockDao().getAllStocksList().size
+    val sips = db.mutualFundSipDao().getAllSipsList().size
+    val mandates = db.conditionalMandateDao().getAllMandatesList().size
+    val shortcuts = db.transactionShortcutDao().getAllShortcutsList().size
+
+    val tableCounts = mapOf(
+      "Transactions & Expenses" to expenses,
+      "Accounts & Wallets" to accounts,
+      "Monthly Budgets" to budgets,
+      "Savings Goals" to goals,
+      "Active Subscriptions" to subs,
+      "Debts & Loans" to loans,
+      "Stock Holdings" to stocks,
+      "Mutual Fund SIPs" to sips,
+      "Auto Mandate Rules" to mandates,
+      "Quick Shortcuts" to shortcuts
+    )
+
+    val totalRecords = expenses + accounts + budgets + goals + subs + loans + stocks + sips + mandates + shortcuts
+
+    var integrityStatus = "OK"
+    try {
+      val cursor = db.openHelper.readableDatabase.query("PRAGMA integrity_check")
+      if (cursor.moveToFirst()) {
+        val result = cursor.getString(0)
+        integrityStatus = if (result.equals("ok", ignoreCase = true)) "OK (Verified)" else result
+      }
+      cursor.close()
+    } catch (e: Exception) {
+      integrityStatus = "Check Failed: ${e.localizedMessage}"
+    }
+
+    val snapshots = listSnapshots(context)
+    val lastSnapshot = snapshots.maxByOrNull { it.timestamp }?.timestamp
+
+    DatabaseHealthInfo(
+      dbName = "expense_tracker.db",
+      dbSizeBytes = totalBytes,
+      formattedSize = formatBytes(totalBytes),
+      version = 9,
+      tableCounts = tableCounts,
+      totalRecords = totalRecords,
+      integrityStatus = integrityStatus,
+      lastSnapshotTime = lastSnapshot
+    )
+  }
+
+  suspend fun optimizeDatabase(context: Context): String = withContext(Dispatchers.IO) {
+    val db = AppDatabase.getDatabase(context)
+    return@withContext try {
+      db.openHelper.writableDatabase.execSQL("PRAGMA wal_checkpoint(FULL)")
+      db.openHelper.writableDatabase.execSQL("VACUUM")
+      "Database compacted and WAL checkpoint completed successfully."
+    } catch (e: Exception) {
+      "Optimization error: ${e.localizedMessage}"
+    }
+  }
+
+  private fun formatBytes(bytes: Long): String {
+    if (bytes <= 0) return "0 B"
+    val units = arrayOf("B", "KB", "MB", "GB")
+    val digitGroups = (Math.log10(bytes.toDouble()) / Math.log10(1024.0)).toInt()
+    return String.format(Locale.US, "%.1f %s", bytes / Math.pow(1024.0, digitGroups.toDouble()), units[digitGroups])
   }
 }

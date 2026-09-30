@@ -29,12 +29,19 @@ class StockPriceUpdateWorker(
 
       val stockApi = StockMarketApiService()
       val mfApi = com.example.data.api.MutualFundApiService()
+      val prefs = com.example.data.preferences.UserPreferencesManager(applicationContext)
+      val finnhubKey = prefs.finnhubApiKey.value
+      val alphaKey = prefs.alphaVantageApiKey.value
 
       val (mfStocks, equityStocks) = stocks.partition { it.assetType == "MUTUAL_FUND" }
 
-      // 1. Batch fetch all equity stock quotes concurrently
+      // 1. Batch fetch all equity stock quotes concurrently using configured API keys
       if (equityStocks.isNotEmpty()) {
-        val quotes = stockApi.fetchBatchQuotes(equityStocks.map { it.symbol })
+        val quotes = stockApi.fetchBatchQuotes(
+          symbols = equityStocks.map { it.symbol },
+          finnhubKey = finnhubKey,
+          alphaVantageKey = alphaKey
+        )
         for (stock in equityStocks) {
           val cleanSym = stock.symbol.uppercase().removeSuffix(".NS").removeSuffix(".BO")
           val quote = quotes[cleanSym] ?: quotes[stock.symbol] ?: quotes[stock.symbol.uppercase()]

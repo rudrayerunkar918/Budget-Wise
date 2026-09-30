@@ -71,10 +71,6 @@ import com.example.ui.components.CreateMutualFundSipDialog
 import com.example.ui.components.IpoSectionContent
 import com.example.ui.components.RealTimeMarketIndicesCard
 import com.example.ui.components.GoogleSearchSourcesDialog
-import com.example.ui.components.FinnhubMarketMetricsCard
-import com.example.ui.components.FinnhubCompanyProfileDialog
-import com.example.ui.components.AlphaVantageMarketMetricsCard
-import com.example.ui.components.AlphaVantageOverviewDialog
 import java.text.SimpleDateFormat
 import java.util.Date
 import androidx.compose.material3.AlertDialog
@@ -146,25 +142,10 @@ fun StocksScreen(
   val realTimeSearchQueries by viewModel.realTimeSearchQueries.collectAsState()
   val lastRealTimeSyncTime by viewModel.lastRealTimeSyncTime.collectAsState()
   val realTimeSyncMessage by viewModel.realTimeSyncMessage.collectAsState()
-  var showSearchSourcesDialog by remember { mutableStateOf(false) }
-
-  // Finnhub Live Market State
   val finnhubKey by viewModel.finnhubApiKey.collectAsState()
-  val activeFinnhubQuote by viewModel.activeFinnhubQuote.collectAsState()
-  val activeFinnhubProfile by viewModel.activeFinnhubProfile.collectAsState()
-  val isLoadingFinnhub by viewModel.isLoadingFinnhubDetails.collectAsState()
-  var showCompanyProfileDialog by remember { mutableStateOf(false) }
-  var showFinnhubQuickLookup by remember { mutableStateOf(false) }
-  var finnhubLookupSymbol by remember { mutableStateOf("") }
-
-  // Alpha Vantage Live Market State
-  val alphaVantageKey by viewModel.alphaVantageApiKey.collectAsState()
-  val activeAlphaVantageQuote by viewModel.activeAlphaVantageQuote.collectAsState()
-  val activeAlphaVantageOverview by viewModel.activeAlphaVantageOverview.collectAsState()
-  val isLoadingAlphaVantage by viewModel.isLoadingAlphaVantageDetails.collectAsState()
-  var showAlphaVantageOverviewDialog by remember { mutableStateOf(false) }
-  var showAlphaVantageQuickLookup by remember { mutableStateOf(false) }
-  var alphaVantageLookupSymbol by remember { mutableStateOf("") }
+  val alphaKey by viewModel.alphaVantageApiKey.collectAsState()
+  val liveForex by viewModel.liveUsdInrRate.collectAsState()
+  var showSearchSourcesDialog by remember { mutableStateOf(false) }
 
   var selectedRecommendationDetail by remember { mutableStateOf<GeminiStockRecommendation?>(null) }
   var showFullGeminiVerdictDialog by remember { mutableStateOf(false) }
@@ -253,6 +234,89 @@ fun StocksScreen(
           onSyncNow = { viewModel.syncWithRealTimeData(force = true) },
           onViewSources = { showSearchSourcesDialog = true }
         )
+      }
+
+      // 1c. Universal INR Pricing & Live Forex Rate Banner
+      item {
+        Surface(
+          shape = RoundedCornerShape(12.dp),
+          color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+          border = BorderStroke(1.dp, Color(0xFF0D47A1).copy(alpha = 0.2f)),
+          modifier = Modifier.fillMaxWidth().testTag("market_api_forex_banner")
+        ) {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+          ) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+              modifier = Modifier.weight(1f)
+            ) {
+              Box(
+                modifier = Modifier
+                  .size(28.dp)
+                  .background(Color(0xFF0D47A1).copy(alpha = 0.15f), CircleShape),
+                contentAlignment = Alignment.Center
+              ) {
+                Icon(
+                  imageVector = Icons.Default.Public,
+                  contentDescription = null,
+                  tint = Color(0xFF0D47A1),
+                  modifier = Modifier.size(16.dp)
+                )
+              }
+              Column {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                  Text(
+                    text = "Universal INR Pricing",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF0D47A1)
+                  )
+                  if (finnhubKey.isNotBlank() || alphaKey.isNotBlank()) {
+                    Surface(
+                      shape = RoundedCornerShape(4.dp),
+                      color = Color(0xFF2E7D32).copy(alpha = 0.15f)
+                    ) {
+                      Text(
+                        text = if (finnhubKey.isNotBlank() && alphaKey.isNotBlank()) "Finnhub + Alpha" else if (finnhubKey.isNotBlank()) "Finnhub" else "Alpha Vantage",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF2E7D32),
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                      )
+                    }
+                  }
+                }
+                Text(
+                  text = "Live rate: 1 USD = ₹${String.format(java.util.Locale.US, "%.2f", liveForex)} • All stocks in INR",
+                  style = MaterialTheme.typography.bodySmall,
+                  fontSize = 11.sp,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+              }
+            }
+
+            IconButton(
+              onClick = {
+                viewModel.refreshLiveUsdInrRate()
+                viewModel.refreshAllStockPrices(force = true)
+              },
+              modifier = Modifier.size(28.dp)
+            ) {
+              Icon(
+                imageVector = Icons.Default.Refresh,
+                contentDescription = "Refresh live stock prices and forex rate",
+                tint = Color(0xFF0D47A1),
+                modifier = Modifier.size(16.dp)
+              )
+            }
+          }
+        }
       }
 
       // 2. Investment Section Selector: STOCKS vs MUTUAL FUNDS vs IPOS
@@ -484,67 +548,7 @@ fun StocksScreen(
           }
         }
 
-        // Active Finnhub Real-Time Quote & Day Range Card
-        if (activeFinnhubQuote != null) {
-          item {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-              Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-              ) {
-                Text(
-                  text = "Live Stock Details (Finnhub)",
-                  style = MaterialTheme.typography.titleSmall,
-                  fontWeight = FontWeight.Bold,
-                  color = MaterialTheme.colorScheme.primary
-                )
-                TextButton(
-                  onClick = { viewModel.activeFinnhubQuote.value = null }
-                ) {
-                  Text("Dismiss", style = MaterialTheme.typography.labelSmall)
-                }
-              }
-              FinnhubMarketMetricsCard(
-                quote = activeFinnhubQuote!!,
-                profile = activeFinnhubProfile,
-                onViewCompanyProfile = { showCompanyProfileDialog = true }
-              )
-            }
-          }
-        }
-
-        // Active Alpha Vantage Real-Time Quote & Fundamentals Card
-        if (activeAlphaVantageQuote != null) {
-          item {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-              Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-              ) {
-                Text(
-                  text = "Live Stock Details (Alpha Vantage)",
-                  style = MaterialTheme.typography.titleSmall,
-                  fontWeight = FontWeight.Bold,
-                  color = Color(0xFFD35400)
-                )
-                TextButton(
-                  onClick = { viewModel.activeAlphaVantageQuote.value = null }
-                ) {
-                  Text("Dismiss", style = MaterialTheme.typography.labelSmall)
-                }
-              }
-              AlphaVantageMarketMetricsCard(
-                quote = activeAlphaVantageQuote!!,
-                overview = activeAlphaVantageOverview,
-                onViewOverview = { showAlphaVantageOverviewDialog = true }
-              )
-            }
-          }
-        }
-
-        // Stock Holdings Count Header
+        // Stock Holdings Count Header (physical font 'edit' removed)
         item {
           Row(
             modifier = Modifier.fillMaxWidth(),
@@ -556,71 +560,12 @@ fun StocksScreen(
               style = MaterialTheme.typography.titleMedium,
               fontWeight = FontWeight.Bold
             )
-            Row(
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-              val isFhConfigured = viewModel.finnhubApiService.isConfigured(finnhubKey)
-              Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = if (isFhConfigured) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier.clickable { showFinnhubQuickLookup = true }
-              ) {
-                Row(
-                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                  Icon(
-                    imageVector = Icons.Default.Public,
-                    contentDescription = "Finnhub Live",
-                    tint = if (isFhConfigured) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(12.dp)
-                  )
-                  Text(
-                    text = if (isFhConfigured) "Finnhub" else "Finnhub",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = if (isFhConfigured) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 11.sp
-                  )
-                }
-              }
-
-              val isAvConfigured = viewModel.alphaVantageApiService.isConfigured(alphaVantageKey)
-              Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = if (isAvConfigured) Color(0xFFE67E22).copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier.clickable { showAlphaVantageQuickLookup = true }
-              ) {
-                Row(
-                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                  Icon(
-                    imageVector = Icons.Default.Bolt,
-                    contentDescription = "Alpha Vantage",
-                    tint = if (isAvConfigured) Color(0xFFD35400) else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(12.dp)
-                  )
-                  Text(
-                    text = "Alpha Vantage",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = if (isAvConfigured) Color(0xFFD35400) else MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 11.sp
-                  )
-                }
-              }
-
-              Text(
-                text = "Live NSE/BSE",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.SemiBold
-              )
-            }
+            Text(
+              text = "Live NSE/BSE",
+              style = MaterialTheme.typography.labelSmall,
+              color = MaterialTheme.colorScheme.primary,
+              fontWeight = FontWeight.SemiBold
+            )
           }
         }
 
@@ -674,10 +619,7 @@ fun StocksScreen(
               onViewRecommendation = { selectedRecommendationDetail = it },
               onUpdatePrice = { stockToEditPrice = stock },
               onEdit = { stockToEdit = stock },
-              onDelete = { stockToDelete = stock },
-              onViewFinnhub = {
-                viewModel.fetchFinnhubDetailsForStock(stock.symbol)
-              }
+              onDelete = { stockToDelete = stock }
             )
           }
         }
@@ -903,288 +845,6 @@ fun StocksScreen(
       searchQueries = realTimeSearchQueries,
       sources = realTimeSearchSources,
       onDismiss = { showSearchSourcesDialog = false }
-    )
-  }
-
-  // Finnhub Company Profile Dialog
-  if (showCompanyProfileDialog && activeFinnhubProfile != null) {
-    FinnhubCompanyProfileDialog(
-      profile = activeFinnhubProfile!!,
-      onDismiss = { showCompanyProfileDialog = false }
-    )
-  }
-
-  // Finnhub Quick Lookup Dialog
-  if (showFinnhubQuickLookup) {
-    val isFhConfigured = viewModel.finnhubApiService.isConfigured(finnhubKey)
-    AlertDialog(
-      onDismissRequest = { showFinnhubQuickLookup = false },
-      title = {
-        Row(
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-          Icon(
-            imageVector = Icons.Default.Public,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary
-          )
-          Column {
-            Text(
-              text = "Finnhub Market Explorer",
-              style = MaterialTheme.typography.titleMedium,
-              fontWeight = FontWeight.Bold
-            )
-            Text(
-              text = if (isFhConfigured) "Real-time quotes & day range" else "API key required for live data",
-              style = MaterialTheme.typography.labelSmall,
-              color = if (isFhConfigured) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-            )
-          }
-        }
-      },
-      text = {
-        Column(
-          verticalArrangement = Arrangement.spacedBy(12.dp),
-          modifier = Modifier.fillMaxWidth()
-        ) {
-          Text(
-            text = "Query real-time stock prices, daily high/low trading ranges, open, prev close, and company details via Finnhub API.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-          )
-
-          OutlinedTextField(
-            value = finnhubLookupSymbol,
-            onValueChange = { finnhubLookupSymbol = it.uppercase() },
-            label = { Text("Stock Symbol / Ticker") },
-            placeholder = { Text("e.g. AAPL, NVDA, TSLA, MSFT") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-          )
-
-          // Quick popular ticker chips
-          Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-              text = "Popular US Equities:",
-              style = MaterialTheme.typography.labelSmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            val popularSymbols = listOf("AAPL", "NVDA", "TSLA", "MSFT", "GOOGL", "AMZN")
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-              popularSymbols.take(3).forEach { sym ->
-                Surface(
-                  shape = RoundedCornerShape(8.dp),
-                  color = MaterialTheme.colorScheme.surfaceVariant,
-                  modifier = Modifier
-                    .weight(1f)
-                    .clickable { finnhubLookupSymbol = sym }
-                ) {
-                  Text(
-                    text = sym,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    modifier = Modifier.padding(vertical = 6.dp)
-                  )
-                }
-              }
-            }
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-              popularSymbols.drop(3).forEach { sym ->
-                Surface(
-                  shape = RoundedCornerShape(8.dp),
-                  color = MaterialTheme.colorScheme.surfaceVariant,
-                  modifier = Modifier
-                    .weight(1f)
-                    .clickable { finnhubLookupSymbol = sym }
-                ) {
-                  Text(
-                    text = sym,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    modifier = Modifier.padding(vertical = 6.dp)
-                  )
-                }
-              }
-            }
-          }
-
-          if (isLoadingFinnhub) {
-            Row(
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-              CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-              Text("Fetching live market data from Finnhub...", style = MaterialTheme.typography.bodySmall)
-            }
-          }
-        }
-      },
-      confirmButton = {
-        Button(
-          onClick = {
-            if (finnhubLookupSymbol.isNotBlank()) {
-              viewModel.fetchFinnhubDetailsForStock(finnhubLookupSymbol)
-              showFinnhubQuickLookup = false
-            }
-          },
-          enabled = finnhubLookupSymbol.isNotBlank() && !isLoadingFinnhub
-        ) {
-          Text("Fetch Live Data")
-        }
-      },
-      dismissButton = {
-        TextButton(onClick = { showFinnhubQuickLookup = false }) {
-          Text("Cancel")
-        }
-      }
-    )
-  }
-
-  // Alpha Vantage Quick Lookup Dialog
-  if (showAlphaVantageQuickLookup) {
-    val isAvConfigured = viewModel.alphaVantageApiService.isConfigured(alphaVantageKey)
-    AlertDialog(
-      onDismissRequest = { showAlphaVantageQuickLookup = false },
-      title = {
-        Row(
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-          Icon(
-            imageVector = Icons.AutoMirrored.Filled.TrendingUp,
-            contentDescription = null,
-            tint = Color(0xFFE67E22)
-          )
-          Column {
-            Text(
-              text = "Alpha Vantage Market Explorer",
-              style = MaterialTheme.typography.titleMedium,
-              fontWeight = FontWeight.Bold
-            )
-            Text(
-              text = if (isAvConfigured) "Real-time BSE, NSE & global quotes active" else "API key required for live data",
-              style = MaterialTheme.typography.labelSmall,
-              color = if (isAvConfigured) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-            )
-          }
-        }
-      },
-      text = {
-        Column(
-          verticalArrangement = Arrangement.spacedBy(12.dp),
-          modifier = Modifier.fillMaxWidth()
-        ) {
-          Text(
-            text = "Query real-time stock prices, daily open/high/low/close, trading volume, and company fundamentals via Alpha Vantage API.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-          )
-
-          OutlinedTextField(
-            value = alphaVantageLookupSymbol,
-            onValueChange = { alphaVantageLookupSymbol = it.uppercase() },
-            label = { Text("Stock Symbol / Ticker") },
-            placeholder = { Text("e.g. TATAMOTORS, RELIANCE, INFY, IBM, AAPL") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-          )
-
-          // Quick popular ticker chips
-          Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-              text = "Popular Indian & Global Equities:",
-              style = MaterialTheme.typography.labelSmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            val popularSymbols = listOf("TATAMOTORS", "RELIANCE", "INFY", "TCS", "AAPL", "MSFT")
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-              popularSymbols.take(3).forEach { sym ->
-                Surface(
-                  shape = RoundedCornerShape(8.dp),
-                  color = MaterialTheme.colorScheme.surfaceVariant,
-                  modifier = Modifier
-                    .weight(1f)
-                    .clickable { alphaVantageLookupSymbol = sym }
-                ) {
-                  Text(
-                    text = sym,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    modifier = Modifier.padding(vertical = 6.dp)
-                  )
-                }
-              }
-            }
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-              popularSymbols.drop(3).forEach { sym ->
-                Surface(
-                  shape = RoundedCornerShape(8.dp),
-                  color = MaterialTheme.colorScheme.surfaceVariant,
-                  modifier = Modifier
-                    .weight(1f)
-                    .clickable { alphaVantageLookupSymbol = sym }
-                ) {
-                  Text(
-                    text = sym,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    modifier = Modifier.padding(vertical = 6.dp)
-                  )
-                }
-              }
-            }
-          }
-
-          if (isLoadingAlphaVantage) {
-            Row(
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-              CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-              Text("Fetching live market quote from Alpha Vantage...", style = MaterialTheme.typography.bodySmall)
-            }
-          }
-        }
-      },
-      confirmButton = {
-        Button(
-          onClick = {
-            if (alphaVantageLookupSymbol.isNotBlank()) {
-              viewModel.fetchAlphaVantageDetailsForStock(alphaVantageLookupSymbol)
-              showAlphaVantageQuickLookup = false
-            }
-          },
-          enabled = alphaVantageLookupSymbol.isNotBlank() && !isLoadingAlphaVantage
-        ) {
-          Text("Fetch Live Data")
-        }
-      },
-      dismissButton = {
-        TextButton(onClick = { showAlphaVantageQuickLookup = false }) {
-          Text("Cancel")
-        }
-      }
     )
   }
 
@@ -2230,8 +1890,7 @@ private fun StockHoldingCard(
   onViewRecommendation: (GeminiStockRecommendation) -> Unit = {},
   onUpdatePrice: () -> Unit,
   onEdit: () -> Unit,
-  onDelete: () -> Unit,
-  onViewFinnhub: () -> Unit = {}
+  onDelete: () -> Unit
 ) {
   val isProfit = stock.isProfit
   val pnlColor = if (isProfit) Color(0xFF2ECC71) else Color(0xFFE74C3C)
@@ -2306,19 +1965,8 @@ private fun StockHoldingCard(
           }
         }
 
-        // Action Icons: Finnhub Live Metrics, Quick Update Price, Delete
+        // Action Icons: Quick Update Price, Delete
         Row(verticalAlignment = Alignment.CenterVertically) {
-          IconButton(
-            onClick = onViewFinnhub,
-            modifier = Modifier.size(34.dp)
-          ) {
-            Icon(
-              imageVector = Icons.Default.Public,
-              contentDescription = "Finnhub Live Quote & Range",
-              tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
-              modifier = Modifier.size(18.dp)
-            )
-          }
           IconButton(
             onClick = onUpdatePrice,
             modifier = Modifier.size(34.dp)

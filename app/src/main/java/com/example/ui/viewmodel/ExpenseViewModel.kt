@@ -31,14 +31,11 @@ import com.example.data.api.StockDatabaseCatalog
 import com.example.data.api.StockMarketApiService
 import com.example.data.api.StockQuote
 import com.example.data.backup.DataBackupManager
+import com.example.data.backup.DatabaseHealthInfo
+import com.example.data.backup.DatabaseSnapshotInfo
 import com.example.data.backup.ImportMode
 import com.example.data.backup.ImportResultStats
-import com.example.data.api.FinnhubApiService
-import com.example.data.api.FinnhubQuote
-import com.example.data.api.FinnhubCompanyProfile
-import com.example.data.api.AlphaVantageApiService
-import com.example.data.api.AlphaVantageQuote
-import com.example.data.api.AlphaVantageOverview
+import com.example.data.worker.AutoBackupWorker
 import com.example.data.worker.StockPriceUpdateWorker
 import java.io.File
 import com.example.data.api.MutualFundCatalog
@@ -48,7 +45,6 @@ import com.example.data.model.BudgetEntity
 import com.example.data.model.ConditionalMandateEntity
 import com.example.data.model.ExpenseCategory
 import com.example.data.model.ExpenseEntity
-import com.example.data.model.ExpenseLogEntity
 import com.example.data.model.LoanEntity
 import com.example.data.model.MutualFundSipEntity
 import com.example.data.model.NotificationLogEntity
@@ -223,21 +219,6 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
   val allMandates: StateFlow<List<ConditionalMandateEntity>> = repository.allMandates
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-  // Daily Personal Expense Logs (Room database)
-  val allExpenseLogs: StateFlow<List<ExpenseLogEntity>> = repository.allExpenseLogs
-    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-  // Filtered today's personal expense logs
-  val todayExpenseLogs: StateFlow<List<ExpenseLogEntity>> = allExpenseLogs.map { logs ->
-    val todayDateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-    logs.filter { it.dateString == todayDateStr }
-  }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-  // Today's total personal expense sum
-  val todayExpenseTotal: StateFlow<Double> = todayExpenseLogs.map { logs ->
-    logs.sumOf { it.amount }
-  }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
-
   val activeMandatesCount: StateFlow<Int> = allMandates.map { list ->
     list.count { it.isEnabled }
   }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
@@ -303,30 +284,9 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
   val aiAnalysisState: StateFlow<AiAnalysisUiState> = _aiAnalysisState.asStateFlow()
 
   // Web Stock API & Gemini Stock Advisor
-  val finnhubApiService = FinnhubApiService()
-  val alphaVantageApiService = AlphaVantageApiService()
-  val mutualFundApiService = com.example.data.api.MutualFundApiService()
-  private val stockMarketApiService = StockMarketApiService(finnhubApiService, alphaVantageApiService)
+  private val stockMarketApiService = StockMarketApiService()
   private val geminiStockAdvisor = GeminiStockAdvisor()
   private val searchGroundingService = GeminiSearchGroundingService(stockMarketApiService)
-
-  // Finnhub API Key & Auto Sync state from Preferences
-  val finnhubApiKey = preferencesManager.finnhubApiKey
-  val finnhubAutoSync = preferencesManager.finnhubAutoSync
-  val isTestingFinnhub = MutableStateFlow(false)
-  val finnhubValidationStatus = MutableStateFlow<String?>(null)
-  val activeFinnhubQuote = MutableStateFlow<FinnhubQuote?>(null)
-  val activeFinnhubProfile = MutableStateFlow<FinnhubCompanyProfile?>(null)
-  val isLoadingFinnhubDetails = MutableStateFlow(false)
-
-  // Alpha Vantage API Key & Auto Sync state from Preferences
-  val alphaVantageApiKey = preferencesManager.alphaVantageApiKey
-  val alphaVantageAutoSync = preferencesManager.alphaVantageAutoSync
-  val isTestingAlphaVantage = MutableStateFlow(false)
-  val alphaVantageValidationStatus = MutableStateFlow<String?>(null)
-  val activeAlphaVantageQuote = MutableStateFlow<AlphaVantageQuote?>(null)
-  val activeAlphaVantageOverview = MutableStateFlow<AlphaVantageOverview?>(null)
-  val isLoadingAlphaVantageDetails = MutableStateFlow(false)
 
   val isUpdatingStockPrices = MutableStateFlow(false)
   val lastStockPriceSyncTime = MutableStateFlow(0L)
@@ -358,7 +318,7 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
     listOf(
       ChatMessage(
         sender = MessageSender.GEMINI,
-        text = "Hello! I am your BudgetWise Gemini AI Assistant. I can answer any questions about your finances, analyze your spending, and directly add new stocks, log expenses, or update budgets in your account.\n\nTry asking me:\n• \"Add 10 shares of Tata Motors at ₹441.50\"\n• \"Log an expense of ₹450 for lunch under Food\"\n• \"What is my net worth?\"\n• \"Set monthly budget for Shopping to ₹5,000\""
+        text = "Hello! I am your BudgetWise Gemini AI Assistant. I can answer any questions about your finances, analyze your spending, and directly add new stocks, log expenses, or update budgets in your account.\n\nTry asking me:\n• \"Add 10 shares of Tata Motors at ₹950\"\n• \"Log an expense of ₹450 for lunch under Food\"\n• \"What is my net worth?\"\n• \"Set monthly budget for Shopping to ₹5,000\""
       )
     )
   )
@@ -392,11 +352,24 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
     } catch (_: Throwable) {
     }
 
+    // Schedule automated daily local database backup if enabled
+    try {
+      if (preferencesManager.autoBackupEnabled.value) {
+        AutoBackupWorker.schedule(application, preferencesManager.autoBackupIntervalHours.value.toLong())
+      }
+    } catch (_: Throwable) {
+    }
+
     viewModelScope.launch {
       try {
-        repository.preseedDataIfEmpty()
-        kotlinx.coroutines.delay(1200)
-        refreshAllStockPrices(force = false)
+        if (!preferencesManager.isDemoDataPurged()) {
+          repository.clearAllDataCompletely()
+          preferencesManager.setDemoDataPurged(true)
+        }
+        if (allStocks.value.isNotEmpty()) {
+          kotlinx.coroutines.delay(1200)
+          refreshAllStockPrices(force = false)
+        }
       } catch (_: Throwable) {
       }
     }
@@ -683,62 +656,6 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
   fun deleteExpense(expense: ExpenseEntity) {
     viewModelScope.launch {
       repository.deleteExpense(expense)
-    }
-  }
-
-  // Daily Personal Expense Log operations (Room)
-  fun addExpenseLog(
-    title: String,
-    amount: Double,
-    category: String,
-    paymentMode: String = "UPI",
-    accountName: String = "Main Checking",
-    note: String = "",
-    isEssential: Boolean = true,
-    tags: String = "",
-    onComplete: (() -> Unit)? = null
-  ) {
-    viewModelScope.launch {
-      val now = System.currentTimeMillis()
-      val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(now))
-      val log = ExpenseLogEntity(
-        title = title.trim(),
-        amount = amount,
-        category = category,
-        timestamp = now,
-        dateString = dateStr,
-        paymentMode = paymentMode,
-        accountName = accountName,
-        note = note.trim(),
-        isEssential = isEssential,
-        tags = tags.trim()
-      )
-      repository.insertExpenseLog(log)
-
-      // Also record into main expense ledger for budget/account updates
-      val cat = ExpenseCategory.fromName(category)
-      addTransaction(
-        title = title.trim(),
-        amount = amount,
-        category = cat,
-        note = if (note.isBlank()) "Daily Expense ($paymentMode)" else note.trim(),
-        type = "EXPENSE",
-        account = accountName,
-        timestamp = now
-      )
-      onComplete?.invoke()
-    }
-  }
-
-  fun deleteExpenseLog(log: ExpenseLogEntity) {
-    viewModelScope.launch {
-      repository.deleteExpenseLog(log)
-    }
-  }
-
-  fun deleteExpenseLogById(id: Long) {
-    viewModelScope.launch {
-      repository.deleteExpenseLogById(id)
     }
   }
 
@@ -1156,6 +1073,23 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
     }
   }
 
+  fun clearAllDataCompletely(onComplete: () -> Unit = {}) {
+    viewModelScope.launch {
+      repository.clearAllDataCompletely()
+      geminiStockVerdict.value = null
+      geminiStockRecommendations.value = emptyMap()
+      preferencesManager.setDemoDataPurged(true)
+      onComplete()
+    }
+  }
+
+  fun loadSampleDataManually(onComplete: () -> Unit = {}) {
+    viewModelScope.launch {
+      repository.preseedSampleDataManually()
+      onComplete()
+    }
+  }
+
   // --- Conditional Mandate Operations ---
   fun insertMandate(mandate: ConditionalMandateEntity, onComplete: () -> Unit = {}) {
     viewModelScope.launch {
@@ -1447,25 +1381,25 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
     }
   }
 
-  // Google Search Grounded & Live Web Market Real-Time Sync
+  // Google Search Grounded Real-Time Market & Portfolio Sync
   fun syncWithRealTimeData(force: Boolean = true, onComplete: ((Boolean, String) -> Unit)? = null) {
     viewModelScope.launch {
       val now = System.currentTimeMillis()
-      if (!force && now - lastRealTimeSyncTime.value < 20_000L) {
+      if (!force && now - lastRealTimeSyncTime.value < 30_000L) {
         onComplete?.invoke(true, "Data is up to date.")
         return@launch
       }
 
       isSyncingRealTimeData.value = true
       isUpdatingStockPrices.value = true
-      realTimeSyncMessage.value = "Syncing live market data & indices..."
-      stockApiStatusMessage.value = "Updating quotes and benchmarks in real-time..."
+      realTimeSyncMessage.value = "Grounding with Google Search via Gemini 3.5 Flash..."
+      stockApiStatusMessage.value = "Syncing live prices with Google Search Grounding..."
 
       try {
         val currentStocks = allStocks.value
         val symbols = currentStocks.map { it.symbol }
 
-        // 1. Fetch real-time market data grounded by Google Search and live benchmarks
+        // 1. Fetch real-time market data grounded by Google Search
         val result = searchGroundingService.syncRealTimeMarketData(symbols, currencySymbol.value)
         realTimeSyncSummary.value = result
         realTimeMarketIndices.value = result.indices
@@ -1474,146 +1408,31 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
         lastRealTimeSyncTime.value = System.currentTimeMillis()
         lastStockPriceSyncTime.value = System.currentTimeMillis()
 
-        // 2. Update stock & mutual fund prices in database
+        // 2. Update stock prices in database
         var updatedCount = 0
-
-        // Finnhub real-time quotes for US / global stocks if configured
-        val fhKey = finnhubApiKey.value
-        val hasFinnhub = finnhubAutoSync.value && finnhubApiService.isConfigured(fhKey)
-        val finnhubQuotes = if (hasFinnhub) {
-          val usStockSymbols = currentStocks
-            .filter { !it.symbol.endsWith(".NS") && !it.symbol.endsWith(".BO") && it.assetType != "MUTUAL_FUND" }
-            .map { it.symbol }
-          if (usStockSymbols.isNotEmpty()) {
-            finnhubApiService.fetchBatchQuotes(usStockSymbols, fhKey)
-          } else {
-            emptyMap()
-          }
-        } else {
-          emptyMap()
-        }
-
-        // Alpha Vantage real-time quotes if configured
-        val avKey = alphaVantageApiKey.value
-        val hasAlphaVantage = alphaVantageAutoSync.value && alphaVantageApiService.isConfigured(avKey)
-        val alphaVantageQuotes = if (hasAlphaVantage) {
-          val symbolsToFetch = currentStocks
-            .filter { it.assetType != "MUTUAL_FUND" }
-            .map { it.symbol }
-          if (symbolsToFetch.isNotEmpty()) {
-            alphaVantageApiService.fetchBatchQuotes(symbolsToFetch, avKey)
-          } else {
-            emptyMap()
-          }
-        } else {
-          emptyMap()
-        }
-
         for (stk in currentStocks) {
           val cleanSym = stk.symbol.uppercase().removeSuffix(".NS").removeSuffix(".BO")
-          val fq = finnhubQuotes[cleanSym] ?: finnhubQuotes[stk.symbol] ?: finnhubQuotes[stk.symbol.uppercase()]
-          val aq = alphaVantageQuotes[cleanSym] ?: alphaVantageQuotes[stk.symbol] ?: alphaVantageQuotes[stk.symbol.uppercase()]
-
-          if (stk.assetType == "MUTUAL_FUND") {
-            // Live AMFI API query for Indian Mutual Funds
-            var updatedMf = false
-            try {
-              val mfRes = mutualFundApiService.fetchNav(stk.symbol)
-              if (mfRes.isSuccess) {
-                val mfQuote = mfRes.getOrNull()
-                if (mfQuote != null && mfQuote.nav > 0) {
-                  repository.updateStock(
-                    stk.copy(
-                      currentPrice = mfQuote.nav,
-                      dailyChangePercent = mfQuote.changePercent,
-                      lastPriceUpdated = System.currentTimeMillis()
-                    )
-                  )
-                  updatedCount++
-                  updatedMf = true
-                }
-              }
-            } catch (_: Exception) {}
-
-            if (!updatedMf) {
-              val mfNav = com.example.data.api.MutualFundCatalog.getFallbackNav(stk.symbol)
-                ?: com.example.data.api.MutualFundCatalog.getFallbackNav(stk.companyName)
-              if (mfNav != null && mfNav > 0) {
-                repository.updateStock(
-                  stk.copy(
-                    currentPrice = mfNav,
-                    lastPriceUpdated = System.currentTimeMillis()
-                  )
-                )
-                updatedCount++
-              }
-            }
-          } else if (cleanSym == "TATAMOTORS" && fq == null && aq == null && !result.stockQuotes.containsKey(cleanSym)) {
-            // Tata Motors benchmark market quote fallback if no live feed responds
+          val update = result.stockQuotes[cleanSym] ?: result.stockQuotes[stk.symbol.uppercase()]
+          if (update != null && update.livePrice > 0) {
             repository.updateStock(
               stk.copy(
-                avgBuyPrice = if (stk.avgBuyPrice > 600.0) 420.00 else stk.avgBuyPrice,
-                currentPrice = 441.50,
-                dailyChangePercent = 0.82,
+                currentPrice = update.livePrice,
+                dailyChangePercent = update.changePercent,
                 lastPriceUpdated = System.currentTimeMillis()
               )
             )
             updatedCount++
-          } else if (fq != null && fq.currentPrice > 0) {
-            repository.updateStock(
-              stk.copy(
-                currentPrice = fq.currentPrice,
-                dailyChangePercent = fq.changePercent,
-                lastPriceUpdated = System.currentTimeMillis()
-              )
-            )
-            updatedCount++
-          } else if (aq != null && aq.price > 0) {
-            repository.updateStock(
-              stk.copy(
-                currentPrice = aq.price,
-                dailyChangePercent = aq.changePercent,
-                lastPriceUpdated = System.currentTimeMillis()
-              )
-            )
-            updatedCount++
-          } else {
-            // Check grounded & web batch quotes with resilient multi-key matching
-            val update = result.stockQuotes[cleanSym]
-              ?: result.stockQuotes[stk.symbol]
-              ?: result.stockQuotes[stk.symbol.uppercase()]
-              ?: result.stockQuotes["$cleanSym.NS"]
-              ?: result.stockQuotes["$cleanSym.BO"]
-              ?: result.stockQuotes.entries.firstOrNull { it.key.equals(cleanSym, ignoreCase = true) || it.key.startsWith("$cleanSym.") }?.value
-
-            if (update != null && update.livePrice > 0) {
-              val verifiedPrice = if (cleanSym == "TATAMOTORS" && update.livePrice > 600.0) 441.50 else update.livePrice
+          } else if (stk.assetType == "MUTUAL_FUND") {
+            val mfNav = com.example.data.api.MutualFundCatalog.getFallbackNav(stk.symbol)
+              ?: com.example.data.api.MutualFundCatalog.getFallbackNav(stk.companyName)
+            if (mfNav != null && mfNav > 0) {
               repository.updateStock(
                 stk.copy(
-                  currentPrice = verifiedPrice,
-                  dailyChangePercent = update.changePercent,
+                  currentPrice = mfNav,
                   lastPriceUpdated = System.currentTimeMillis()
                 )
               )
               updatedCount++
-            } else {
-              // Direct fallback query to StockMarketApiService for individual equity
-              try {
-                val directRes = stockMarketApiService.fetchStockQuote(stk.symbol, fhKey, avKey)
-                if (directRes.isSuccess) {
-                  val dq = directRes.getOrNull()
-                  if (dq != null && dq.regularMarketPrice > 0) {
-                    repository.updateStock(
-                      stk.copy(
-                        currentPrice = dq.regularMarketPrice,
-                        dailyChangePercent = dq.changePercent,
-                        lastPriceUpdated = System.currentTimeMillis()
-                      )
-                    )
-                    updatedCount++
-                  }
-                }
-              } catch (_: Exception) {}
             }
           }
         }
@@ -1627,19 +1446,7 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
           lastIpoSyncDate.value = IpoManager.getLastSyncDate(getApplication())
         } catch (_: Exception) {}
 
-        val sourceBadge = when {
-          result.searchQueries.isNotEmpty() && hasFinnhub && finnhubQuotes.isNotEmpty() -> "Finnhub & Google Search"
-          result.searchQueries.isNotEmpty() -> "Google Search Grounding"
-          hasFinnhub && finnhubQuotes.isNotEmpty() -> "Finnhub & Live Market Feed"
-          else -> "Live Market Feed"
-        }
-
-        val msg = if (currentStocks.isNotEmpty()) {
-          "Real-time sync complete: $updatedCount/${currentStocks.size} holdings updated • Grounded via $sourceBadge"
-        } else {
-          "Real-time market indices synchronized (${result.indices.size} benchmarks active) • $sourceBadge"
-        }
-
+        val msg = "Real-time sync complete: $updatedCount holdings updated • Grounded via Google Search"
         realTimeSyncMessage.value = msg
         stockApiStatusMessage.value = msg
         onComplete?.invoke(true, msg)
@@ -1649,7 +1456,7 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
           autoAnalyzeStocksWithGemini(allStocks.value)
         }
       } catch (e: Exception) {
-        val err = "Sync completed with cached/web quotes: ${e.message ?: "network note"}"
+        val err = "Sync completed with cached/web quotes: ${e.message ?: "network busy"}"
         realTimeSyncMessage.value = err
         stockApiStatusMessage.value = err
         onComplete?.invoke(false, err)
@@ -1667,98 +1474,12 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
 
   fun fetchLiveQuoteForSymbol(symbol: String, onResult: (StockQuote?) -> Unit) {
     viewModelScope.launch {
-      val result = stockMarketApiService.fetchStockQuote(symbol, finnhubApiKey.value, alphaVantageApiKey.value)
+      val result = stockMarketApiService.fetchStockQuote(
+        rawSymbol = symbol,
+        finnhubKey = preferencesManager.finnhubApiKey.value,
+        alphaVantageKey = preferencesManager.alphaVantageApiKey.value
+      )
       onResult(result.getOrNull())
-    }
-  }
-
-  // --- Finnhub Settings & Market Info ---
-  fun setFinnhubApiKey(key: String) {
-    preferencesManager.setFinnhubApiKey(key)
-    finnhubValidationStatus.value = null
-  }
-
-  fun setFinnhubAutoSync(enabled: Boolean) {
-    preferencesManager.setFinnhubAutoSync(enabled)
-  }
-
-  fun validateFinnhubApiKey(key: String, onComplete: ((Boolean, String) -> Unit)? = null) {
-    viewModelScope.launch {
-      isTestingFinnhub.value = true
-      finnhubValidationStatus.value = "Testing key with Finnhub..."
-      val result = finnhubApiService.validateApiKey(key)
-      isTestingFinnhub.value = false
-      if (result.isSuccess) {
-        finnhubValidationStatus.value = "Verified: Connected to Finnhub live market!"
-        onComplete?.invoke(true, "API key verified and connected successfully!")
-      } else {
-        val err = result.exceptionOrNull()?.localizedMessage ?: "Failed to validate key"
-        finnhubValidationStatus.value = "Error: $err"
-        onComplete?.invoke(false, err)
-      }
-    }
-  }
-
-  fun fetchFinnhubDetailsForStock(symbol: String) {
-    viewModelScope.launch {
-      isLoadingFinnhubDetails.value = true
-      activeFinnhubQuote.value = null
-      activeFinnhubProfile.value = null
-      val key = finnhubApiKey.value
-      val quoteRes = finnhubApiService.fetchQuote(symbol, key)
-      if (quoteRes.isSuccess) {
-        activeFinnhubQuote.value = quoteRes.getOrNull()
-      }
-      val profileRes = finnhubApiService.fetchCompanyProfile(symbol, key)
-      if (profileRes.isSuccess) {
-        activeFinnhubProfile.value = profileRes.getOrNull()
-      }
-      isLoadingFinnhubDetails.value = false
-    }
-  }
-
-  // --- Alpha Vantage Settings & Market Info ---
-  fun setAlphaVantageApiKey(key: String) {
-    preferencesManager.setAlphaVantageApiKey(key)
-    alphaVantageValidationStatus.value = null
-  }
-
-  fun setAlphaVantageAutoSync(enabled: Boolean) {
-    preferencesManager.setAlphaVantageAutoSync(enabled)
-  }
-
-  fun validateAlphaVantageApiKey(key: String, onComplete: ((Boolean, String) -> Unit)? = null) {
-    viewModelScope.launch {
-      isTestingAlphaVantage.value = true
-      alphaVantageValidationStatus.value = "Testing key with Alpha Vantage..."
-      val result = alphaVantageApiService.validateApiKey(key)
-      isTestingAlphaVantage.value = false
-      if (result.isSuccess) {
-        alphaVantageValidationStatus.value = "Verified: Connected to Alpha Vantage!"
-        onComplete?.invoke(true, "Alpha Vantage API key verified!")
-      } else {
-        val err = result.exceptionOrNull()?.localizedMessage ?: "Failed to validate key"
-        alphaVantageValidationStatus.value = "Error: $err"
-        onComplete?.invoke(false, err)
-      }
-    }
-  }
-
-  fun fetchAlphaVantageDetailsForStock(symbol: String) {
-    viewModelScope.launch {
-      isLoadingAlphaVantageDetails.value = true
-      activeAlphaVantageQuote.value = null
-      activeAlphaVantageOverview.value = null
-      val key = alphaVantageApiKey.value
-      val quoteRes = alphaVantageApiService.fetchGlobalQuote(symbol, key)
-      if (quoteRes.isSuccess) {
-        activeAlphaVantageQuote.value = quoteRes.getOrNull()
-      }
-      val overviewRes = alphaVantageApiService.fetchOverview(symbol, key)
-      if (overviewRes.isSuccess) {
-        activeAlphaVantageOverview.value = overviewRes.getOrNull()
-      }
-      isLoadingAlphaVantageDetails.value = false
     }
   }
 
@@ -2179,12 +1900,210 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
       try {
         val stats = DataBackupManager.restoreBackup(context, jsonString, mode)
         backupOperationMessage.value = "Restored: ${stats.importedExpenses} expenses, ${stats.importedAccounts} accounts, ${stats.importedStocks} stocks."
+        loadDatabaseHealth()
+        loadSnapshots()
         onComplete(Result.success(stats))
       } catch (e: Exception) {
         backupOperationMessage.value = "Import failed: ${e.localizedMessage}"
         onComplete(Result.failure(e))
       } finally {
         isImportingData.value = false
+      }
+    }
+  }
+
+  // --- Database Health & Snapshot Management Hub ---
+  val autoBackupEnabled: StateFlow<Boolean> = preferencesManager.autoBackupEnabled
+  val autoBackupIntervalHours: StateFlow<Int> = preferencesManager.autoBackupIntervalHours
+  val lastAutoBackupTimestamp: StateFlow<Long> = preferencesManager.lastAutoBackupTimestamp
+  val isBackupEncryptionDefault: StateFlow<Boolean> = preferencesManager.backupEncryptionEnabled
+
+  val databaseSnapshots = MutableStateFlow<List<DatabaseSnapshotInfo>>(emptyList())
+  val databaseHealth = MutableStateFlow<DatabaseHealthInfo?>(null)
+  val isDatabaseBusy = MutableStateFlow(false)
+
+  fun toggleAutoBackup(enabled: Boolean) {
+    preferencesManager.setAutoBackupEnabled(enabled)
+    if (enabled) {
+      AutoBackupWorker.schedule(getApplication(), autoBackupIntervalHours.value.toLong())
+    } else {
+      AutoBackupWorker.cancel(getApplication())
+    }
+  }
+
+  fun setAutoBackupInterval(hours: Int) {
+    preferencesManager.setAutoBackupIntervalHours(hours)
+    if (autoBackupEnabled.value) {
+      AutoBackupWorker.schedule(getApplication(), hours.toLong())
+    }
+  }
+
+  fun toggleBackupEncryptionDefault(enabled: Boolean) {
+    preferencesManager.setBackupEncryptionEnabled(enabled)
+  }
+
+  fun loadDatabaseHealth() {
+    viewModelScope.launch {
+      try {
+        val health = DataBackupManager.getDatabaseHealth(getApplication())
+        databaseHealth.value = health
+      } catch (_: Exception) {
+      }
+    }
+  }
+
+  fun loadSnapshots() {
+    viewModelScope.launch {
+      try {
+        val list = DataBackupManager.listSnapshots(getApplication())
+        databaseSnapshots.value = list
+      } catch (_: Exception) {
+      }
+    }
+  }
+
+  fun createManualSnapshot(
+    passphrase: String? = null,
+    onResult: (Boolean, String) -> Unit
+  ) {
+    viewModelScope.launch {
+      isDatabaseBusy.value = true
+      try {
+        val snapshot = DataBackupManager.createLocalSnapshot(
+          context = getApplication(),
+          isAutomated = false,
+          passphrase = passphrase,
+          maxRetained = 15
+        )
+        loadSnapshots()
+        loadDatabaseHealth()
+        val msg = if (snapshot.isEncrypted) "Encrypted snapshot saved (${snapshot.formattedSize})" else "Snapshot created (${snapshot.formattedSize})"
+        onResult(true, msg)
+      } catch (e: Exception) {
+        onResult(false, e.localizedMessage ?: "Failed to create snapshot")
+      } finally {
+        isDatabaseBusy.value = false
+      }
+    }
+  }
+
+  fun restoreFromSnapshot(
+    snapshot: DatabaseSnapshotInfo,
+    mode: ImportMode,
+    passphrase: String? = null,
+    onResult: (Boolean, String) -> Unit
+  ) {
+    viewModelScope.launch {
+      isDatabaseBusy.value = true
+      try {
+        val rawBytes = snapshot.file.readBytes()
+        val jsonString = if (DataBackupManager.isEncryptedPayload(rawBytes)) {
+          if (passphrase.isNullOrBlank()) {
+            throw IllegalArgumentException("Passphrase required for encrypted backup")
+          }
+          DataBackupManager.decryptPayload(rawBytes, passphrase)
+        } else {
+          String(rawBytes, java.nio.charset.StandardCharsets.UTF_8)
+        }
+
+        val stats = DataBackupManager.restoreBackup(getApplication(), jsonString, mode)
+        loadDatabaseHealth()
+        loadSnapshots()
+        onResult(true, "Successfully restored ${stats.totalImported} records (${mode.name.lowercase()})")
+      } catch (e: Exception) {
+        onResult(false, e.localizedMessage ?: "Restore failed")
+      } finally {
+        isDatabaseBusy.value = false
+      }
+    }
+  }
+
+  fun deleteSnapshot(snapshot: DatabaseSnapshotInfo) {
+    viewModelScope.launch {
+      DataBackupManager.deleteSnapshot(snapshot.file)
+      loadSnapshots()
+    }
+  }
+
+  fun optimizeDatabase(onResult: (String) -> Unit) {
+    viewModelScope.launch {
+      isDatabaseBusy.value = true
+      try {
+        val msg = DataBackupManager.optimizeDatabase(getApplication())
+        loadDatabaseHealth()
+        onResult(msg)
+      } catch (e: Exception) {
+        onResult("Optimization failed: ${e.localizedMessage}")
+      } finally {
+        isDatabaseBusy.value = false
+      }
+    }
+  }
+
+  fun exportEncryptedBackup(
+    context: Context,
+    passphrase: String,
+    onFileReady: (File) -> Unit
+  ) {
+    viewModelScope.launch {
+      isExportingData.value = true
+      try {
+        val (file, _) = DataBackupManager.exportAllDataToJson(context, passphrase = passphrase)
+        onFileReady(file)
+      } catch (e: Exception) {
+        backupOperationMessage.value = "Encrypted export failed: ${e.localizedMessage}"
+      } finally {
+        isExportingData.value = false
+      }
+    }
+  }
+
+  // --- Market Data API Keys & Real-Time INR Forex Rate ---
+  val finnhubApiKey = preferencesManager.finnhubApiKey
+  val alphaVantageApiKey = preferencesManager.alphaVantageApiKey
+  val liveUsdInrRate = MutableStateFlow(85.50)
+
+  fun setFinnhubApiKey(key: String) {
+    preferencesManager.setFinnhubApiKey(key)
+    refreshLiveUsdInrRate()
+  }
+
+  fun setAlphaVantageApiKey(key: String) {
+    preferencesManager.setAlphaVantageApiKey(key)
+    refreshLiveUsdInrRate()
+  }
+
+  fun refreshLiveUsdInrRate() {
+    viewModelScope.launch {
+      val rate = stockMarketApiService.fetchLiveUsdInrRate(
+        alphaVantageKey = preferencesManager.alphaVantageApiKey.value,
+        finnhubKey = preferencesManager.finnhubApiKey.value,
+        forceRefresh = true
+      )
+      if (rate > 50.0) {
+        liveUsdInrRate.value = rate
+      }
+    }
+  }
+
+  fun testFinnhubApiKey(key: String, onResult: (Boolean, String) -> Unit) {
+    viewModelScope.launch {
+      val result = stockMarketApiService.testFinnhubApiKey(key)
+      if (result.isSuccess) {
+        onResult(true, result.getOrNull() ?: "Success")
+      } else {
+        onResult(false, result.exceptionOrNull()?.localizedMessage ?: "Failed to connect to Finnhub")
+      }
+    }
+  }
+
+  fun testAlphaVantageApiKey(key: String, onResult: (Boolean, String) -> Unit) {
+    viewModelScope.launch {
+      val result = stockMarketApiService.testAlphaVantageApiKey(key)
+      if (result.isSuccess) {
+        onResult(true, result.getOrNull() ?: "Success")
+      } else {
+        onResult(false, result.exceptionOrNull()?.localizedMessage ?: "Failed to connect to Alpha Vantage")
       }
     }
   }

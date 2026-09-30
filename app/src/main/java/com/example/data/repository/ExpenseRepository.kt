@@ -5,7 +5,6 @@ import com.example.data.model.AccountEntity
 import com.example.data.model.BudgetEntity
 import com.example.data.model.ExpenseCategory
 import com.example.data.model.ExpenseEntity
-import com.example.data.model.ExpenseLogEntity
 import com.example.data.model.LoanEntity
 import com.example.data.model.MutualFundSipEntity
 import com.example.data.model.NotificationLogEntity
@@ -19,7 +18,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Date
 import java.util.Locale
 
 class ExpenseRepository(
@@ -28,7 +26,6 @@ class ExpenseRepository(
 ) {
 
   private val expenseDao = database.expenseDao()
-  private val expenseLogDao = database.expenseLogDao()
   private val budgetDao = database.budgetDao()
   private val goalDao = database.savingsGoalDao()
   private val notificationDao = database.notificationDao()
@@ -41,7 +38,6 @@ class ExpenseRepository(
   private val mandateDao = database.conditionalMandateDao()
 
   val allExpenses: Flow<List<ExpenseEntity>> = expenseDao.getAllExpenses()
-  val allExpenseLogs: Flow<List<ExpenseLogEntity>> = expenseLogDao.getAllExpenseLogs()
   val allGoals: Flow<List<SavingsGoalEntity>> = goalDao.getAllGoals()
   val allNotifications: Flow<List<NotificationLogEntity>> = notificationDao.getAllLogs()
   val unreadNotificationsCount: Flow<Int> = notificationDao.getUnreadCount()
@@ -209,35 +205,6 @@ class ExpenseRepository(
   suspend fun updateExpense(expense: ExpenseEntity) = withContext(Dispatchers.IO) {
     expenseDao.updateExpense(expense)
   }
-
-  // Daily Personal Expense Log operations
-  suspend fun insertExpenseLog(log: ExpenseLogEntity): Long = withContext(Dispatchers.IO) {
-    expenseLogDao.insertExpenseLog(log)
-  }
-
-  suspend fun updateExpenseLog(log: ExpenseLogEntity) = withContext(Dispatchers.IO) {
-    expenseLogDao.updateExpenseLog(log)
-  }
-
-  suspend fun deleteExpenseLog(log: ExpenseLogEntity) = withContext(Dispatchers.IO) {
-    expenseLogDao.deleteExpenseLog(log)
-  }
-
-  suspend fun deleteExpenseLogById(id: Long) = withContext(Dispatchers.IO) {
-    expenseLogDao.deleteExpenseLogById(id)
-  }
-
-  fun getExpenseLogsForDate(dateString: String): Flow<List<ExpenseLogEntity>> =
-    expenseLogDao.getExpenseLogsForDate(dateString)
-
-  fun getExpenseLogsBetween(startTime: Long, endTime: Long): Flow<List<ExpenseLogEntity>> =
-    expenseLogDao.getExpenseLogsBetween(startTime, endTime)
-
-  fun getDailyTotalSpend(dateString: String): Flow<Double?> =
-    expenseLogDao.getDailyTotalSpend(dateString)
-
-  fun getTotalSpendBetween(startTime: Long, endTime: Long): Flow<Double?> =
-    expenseLogDao.getTotalSpendBetween(startTime, endTime)
 
   // Account operations
   suspend fun insertAccount(account: AccountEntity): Long = withContext(Dispatchers.IO) {
@@ -408,9 +375,10 @@ class ExpenseRepository(
   }
 
   suspend fun preseedDataIfEmpty() = withContext(Dispatchers.IO) {
-    val existingExpenses = expenseDao.getAllExpenses().first()
-    if (existingExpenses.isNotEmpty()) return@withContext
+    // Intentionally a no-op: Automatic sample data seeding on startup is disabled per user configuration.
+  }
 
+  suspend fun preseedSampleDataManually() = withContext(Dispatchers.IO) {
     val now = System.currentTimeMillis()
     val dayMillis = 24L * 60 * 60 * 1000
     val monthYear = SimpleDateFormat("yyyy-MM", Locale.US).format(Calendar.getInstance().time)
@@ -843,28 +811,12 @@ class ExpenseRepository(
           symbol = "TATAMOTORS",
           companyName = "Tata Motors Limited",
           shares = 50.0,
-          avgBuyPrice = 420.0,
-          currentPrice = 441.50,
+          avgBuyPrice = 820.0,
+          currentPrice = 965.40,
           currencySymbol = curr,
           notes = "EV & passenger vehicle pioneer"
         )
       )
-    } else {
-      // Auto-correct any Tata Motors holding price discrepancies to verified current post-demerger price 441.50
-      val currentHoldings = stockDao.getAllStocksList()
-      for (stk in currentHoldings) {
-        val cleanSym = stk.symbol.uppercase().removeSuffix(".NS").removeSuffix(".BO")
-        if (cleanSym == "TATAMOTORS" && (Math.abs(stk.currentPrice - 441.50) > 0.01 || stk.avgBuyPrice > 600.0)) {
-          stockDao.updateStock(
-            stk.copy(
-              avgBuyPrice = if (stk.avgBuyPrice > 600.0) 420.00 else stk.avgBuyPrice,
-              currentPrice = 441.50,
-              dailyChangePercent = 0.82,
-              lastPriceUpdated = System.currentTimeMillis()
-            )
-          )
-        }
-      }
     }
 
     // Preseed 5 helpful transaction shortcuts if empty
@@ -934,76 +886,6 @@ class ExpenseRepository(
           totalInvested = 15000.0,
           installmentsCompleted = 3,
           notes = "Diversified flexi cap growth allocation"
-        )
-      )
-    }
-
-    // Preseed daily personal expense logs if empty
-    if (expenseLogDao.getAllExpenseLogsList().isEmpty()) {
-      val todayDateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(now))
-      val yesterdayDateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(now - dayMillis))
-      expenseLogDao.insertExpenseLogs(
-        listOf(
-          ExpenseLogEntity(
-            title = "Morning Coffee & Croissant",
-            amount = 140.0,
-            category = "FOOD",
-            timestamp = now - (2L * 60 * 60 * 1000),
-            dateString = todayDateStr,
-            paymentMode = "UPI",
-            accountName = "Main Checking",
-            note = "Espresso & bakery snack",
-            isEssential = true,
-            tags = "Daily,Breakfast"
-          ),
-          ExpenseLogEntity(
-            title = "Metro Transit Smart Card",
-            amount = 80.0,
-            category = "TRANSPORT",
-            timestamp = now - (4L * 60 * 60 * 1000),
-            dateString = todayDateStr,
-            paymentMode = "UPI",
-            accountName = "Main Checking",
-            note = "Daily commute recharge",
-            isEssential = true,
-            tags = "Daily,Transit"
-          ),
-          ExpenseLogEntity(
-            title = "Office Team Lunch",
-            amount = 280.0,
-            category = "FOOD",
-            timestamp = now - (6L * 60 * 60 * 1000),
-            dateString = todayDateStr,
-            paymentMode = "UPI",
-            accountName = "Main Checking",
-            note = "Indian thali lunch",
-            isEssential = true,
-            tags = "Daily,Lunch"
-          ),
-          ExpenseLogEntity(
-            title = "Supermarket Fresh Produce & Milk",
-            amount = 420.0,
-            category = "GROCERIES",
-            timestamp = now - dayMillis - (3L * 60 * 60 * 1000),
-            dateString = yesterdayDateStr,
-            paymentMode = "UPI",
-            accountName = "Main Checking",
-            note = "Daily essentials & organic milk",
-            isEssential = true,
-            tags = "Daily,Home"
-          ),
-          ExpenseLogEntity(
-            title = "Chemist Daily Medicines",
-            amount = 190.0,
-            category = "HEALTH",
-            timestamp = now - dayMillis - (6L * 60 * 60 * 1000),
-            dateString = yesterdayDateStr,
-            paymentMode = "CASH",
-            accountName = "Cash Wallet",
-            note = "Health supplements & vitamins",
-            isEssential = true,
-            tags = "Daily,Health"
-          )
         )
       )
     }
@@ -1096,6 +978,20 @@ class ExpenseRepository(
     accountDao.insertAccount(AccountEntity(name = "Checking Account", type = "CHECKING", balance = 0.0))
     accountDao.insertAccount(AccountEntity(name = "Cash", type = "CASH", balance = 0.0))
     accountDao.insertAccount(AccountEntity(name = "Savings", type = "SAVINGS", balance = 0.0))
+  }
+
+  suspend fun clearAllDataCompletely(): Unit = withContext(Dispatchers.IO) {
+    expenseDao.clearAll()
+    accountDao.clearAll()
+    budgetDao.clearAll()
+    goalDao.clearAll()
+    subscriptionDao.clearAll()
+    loanDao.clearAll()
+    stockDao.clearAll()
+    sipDao.clearAll()
+    notificationDao.clearAll()
+    shortcutDao.clearAll()
+    mandateDao.clearAll()
   }
 }
 
